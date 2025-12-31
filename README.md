@@ -155,5 +155,5 @@ Built with 🖤 by [@thejustinwalsh](https://github.com/thejustinwalsh)
 ---
 
 <div align="center">
-  <sub>Made possible by Tauri, React, Rust, and a whole lot of ~~coffee~~ Claude ☕</sub>
+  <sub>Made possible by Tauri, React, Rust, and a whole lot of <s>coffee</s> claude ☕</sub>
 </div>
