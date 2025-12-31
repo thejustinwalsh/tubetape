@@ -100,6 +100,66 @@ Use native file dialogs to export samples exactly where you need them. No cloud,
 
 ---
 
+## 📋 Roadmap & TODOs
+
+### 1. yt-dlp Binary Distribution & EJS Script Handling
+**Priority:** High | **Category:** Core Infrastructure
+
+Enable fully self-contained binary distribution without relying on user's local environment.
+
+**Tasks:**
+- [ ] Integrate yt-dlp binary fetching from GitHub releases
+- [ ] Implement EJS script handling for dynamic download URLs (see [yt-dlp EJS Wiki](https://github.com/yt-dlp/yt-dlp/wiki/EJS))
+- [ ] Evaluate Deno bundling for EJS template processing
+- [ ] Create Rust layer for secure binary execution with proper CLI argument passing
+- [ ] Add binary caching and versioning mechanism
+- [ ] Implement fallback strategy if binary fetch fails
+
+**Details:** See [docs/YTDLP_INTEGRATION.md](docs/YTDLP_INTEGRATION.md)
+
+---
+
+### 2. Advanced DAW Features
+**Priority:** High | **Category:** User Experience
+
+Expand audio editing capabilities with professional DAW-like tools for sample creation.
+
+**Tasks:**
+- [ ] **Loop Detection** - Automatically detect and suggest perfect loop points
+- [ ] **Beat Snapping** - Snap sample boundaries to detected beats/tempo grid
+- [ ] **BPM Detection** - Analyze source audio and samples for tempo information
+- [ ] **Loop Markers** - Visual markers for loop start/end with auto-trimming to loops
+- [ ] **Waveform Zoom** - Multi-level zoom with detailed peak rendering
+- [ ] **Grid/Ruler** - Temporal grid overlay for sample-accurate editing
+- [ ] **Meta Display** - Show BPM, key, and other audio characteristics
+
+**Completed Features:**
+- [x] Sample-accurate looping and playback
+- [x] Visual waveform with region selection
+
+**Details:** See [docs/DAW_FEATURES.md](docs/DAW_FEATURES.md)
+
+---
+
+### 3. Project Flow & Caching Improvements
+**Priority:** High | **Category:** Stability & Performance
+
+Refine project management and implement intelligent caching for faster workflows.
+
+**Tasks:**
+- [ ] Load cached source audio if already extracted (check IndexedDB)
+- [ ] Implement smart project state management
+- [ ] Add project version/migration support
+- [ ] Create proper cleanup mechanism for orphaned cache entries
+- [ ] Improve source URL validation and duplicate detection
+- [ ] Add project export/import functionality
+- [ ] Optimize IndexedDB queries and indexing
+- [ ] Implement proper error recovery for failed extractions
+
+**Details:** See [docs/PROJECT_FLOW.md](docs/PROJECT_FLOW.md)
+
+---
+
 ## 🏗️ Development
 
 ```bash
