@@ -1,0 +1,122 @@
+@import "tailwindcss";
+
+html, body {
+  background-color: #050508;
+  color: white;
+  margin: 0;
+}
+
+@font-face {
+  font-family: 'Orbitron';
+  src: url('/fonts/Orbitron.ttf') format('truetype');
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Russo One';
+  src: url('/fonts/RussoOne.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Press Start 2P';
+  src: url('/fonts/PressStart2P.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  /* 80s Retro Color Palette */
+  --color-neon-pink: #ff006e;
+  --color-neon-cyan: #00f5ff;
+  --color-neon-purple: #8b5cf6;
+  --color-neon-orange: #ff5e00;
+  --color-neon-green: #39ff14;
+  --color-neon-yellow: #ffff00;
+  
+  --color-retro-dark: #0a0a0f;
+  --color-retro-darker: #050508;
+  --color-retro-surface: #1a1a2e;
+  --color-retro-surface-light: #252540;
+  
+  --color-electric-blue: #00d9ff;
+  --color-hot-pink: #ff0080;
+  --color-laser-purple: #b24bf3;
+  --color-sunset-orange: #ff6b35;
+  --color-acid-green: #00ff41;
+  
+  /* Custom color scales */
+  --color-cyber-50: #f0f9ff;
+  --color-cyber-100: #e0f2fe;
+  --color-cyber-200: #bae6fd;
+  --color-cyber-300: #7dd3fc;
+  --color-cyber-400: #38bdf8;
+  --color-cyber-500: #00d9ff;
+  --color-cyber-600: #00b8d9;
+  --color-cyber-700: #0097b8;
+  --color-cyber-800: #006b8f;
+  --color-cyber-900: #004a5f;
+  
+  --color-synth-50: #fdf4ff;
+  --color-synth-100: #fae8ff;
+  --color-synth-200: #f5d0fe;
+  --color-synth-300: #f0abfc;
+  --color-synth-400: #e879f9;
+  --color-synth-500: #b24bf3;
+  --color-synth-600: #9333ea;
+  --color-synth-700: #7e22ce;
+  --color-synth-800: #6b21a8;
+  --color-synth-900: #581c87;
+  
+  /* Custom 80s Fonts */
+  --font-family-retro: 'Orbitron', ui-sans-serif, system-ui, sans-serif;
+  --font-family-display: 'Russo One', ui-sans-serif, system-ui, sans-serif;
+  --font-family-pixel: 'Press Start 2P', monospace;
+  
+  /* Set default Tailwind fonts */
+  --font-sans: 'Orbitron', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Press Start 2P', monospace;
+  
+  --font-weight-heavy: 900;
+  
+  /* Shadows with glow effects */
+  --shadow-neon-pink: 0 0 20px rgba(255, 0, 110, 0.5);
+  --shadow-neon-cyan: 0 0 20px rgba(0, 245, 255, 0.5);
+  --shadow-neon-purple: 0 0 20px rgba(178, 75, 243, 0.5);
+}
+
+:root {
+  background: linear-gradient(135deg, var(--color-retro-darker) 0%, var(--color-retro-dark) 50%, #1a0a2e 100%);
+  color: var(--color-cyber-100);
+}
+
+.logo {
+  height: 6rem;
+  padding: 1.5rem;
+  transition: all 0.3s ease;
+  filter: drop-shadow(0 0 0 transparent);
+}
+
+.logo:hover {
+  transform: scale(1.1);
+}
+
+.logo.vite:hover {
+  filter: drop-shadow(0 0 1.5em var(--color-laser-purple)) 
+          drop-shadow(0 0 0.5em var(--color-laser-purple));
+}
+
+.logo.react:hover {
+  filter: drop-shadow(0 0 1.5em var(--color-electric-blue)) 
+          drop-shadow(0 0 0.5em var(--color-electric-blue));
+}
+
+.logo.tauri:hover {
+  filter: drop-shadow(0 0 1.5em var(--color-neon-cyan)) 
+          drop-shadow(0 0 0.5em var(--color-neon-cyan));
+}
