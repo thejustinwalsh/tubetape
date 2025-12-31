@@ -54,11 +54,10 @@ jobs:
           security find-identity -v -p codesigning build.keychain
 
       - name: verify certificate
-        id: verify_cert
         run: |
           CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
           CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
-          echo "cert_id=$CERT_ID" >> $GITHUB_OUTPUT
+          echo "CERT_ID=$CERT_ID" >> $GITHUB_ENV
 
       - name: build and publish
         uses: tauri-apps/tauri-action@v0.6.0
@@ -69,7 +68,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_CERTIFICATE: ${{ env.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ steps.verify_cert.outputs.cert_id }}
+          APPLE_SIGNING_IDENTITY: ${{ env.CERT_ID }}
         with:
           tagName: app-v__VERSION__
           releaseName: 'App v__VERSION__'
