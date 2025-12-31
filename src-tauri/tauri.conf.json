@@ -4,9 +4,9 @@
   "version": "0.1.1",
   "identifier": "dev.tjw.tubetape",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "bun scripts/setup-deno.ts && bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "NODE_ENV=production bun scripts/setup-deno.ts && bun run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -34,6 +34,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "resources": [
+      "binaries/deno/*"
     ]
   }
 }

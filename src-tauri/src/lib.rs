@@ -1,4 +1,5 @@
 mod audio;
+mod deno;
 mod youtube;
 
 use serde::{Deserialize, Serialize};
@@ -84,7 +85,19 @@ async fn extract_audio(
         video_id: video_id.clone(),
     });
 
-    if let Err(e) = youtube::download_audio(&url, &output_path, |progress, status| {
+    // Ensure deno binary is available
+    let deno_path = match deno::ensure_deno_binary(app.clone()).await {
+        Ok(path) => {
+            println!("[tubetape] Deno available at: {:?}", path);
+            Some(path)
+        }
+        Err(e) => {
+            println!("[tubetape] Deno not available: {}, continuing without it", e);
+            None
+        }
+    };
+
+    if let Err(e) = youtube::download_audio(&url, &output_path, deno_path, |progress, status| {
         let _ = on_event.send(ExtractionEvent::Progress {
             percent: progress,
             status: status.to_string(),
@@ -308,6 +321,7 @@ pub fn run() {
             export_sample,
             check_cached_audio,
             get_app_stats,
+            deno::get_deno_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
