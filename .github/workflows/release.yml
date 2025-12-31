@@ -64,8 +64,11 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
           security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -A
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          echo "=== Checking what was imported ==="
+          security find-identity -v build.keychain
           security find-identity -v -p codesigning build.keychain
+          echo "=== Setting partition list ==="
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" build.keychain
 
       - name: verify certificate
         id: verify_cert
