@@ -43,8 +43,9 @@ jobs:
           APPLE_CERTIFICATE_PART1: ${{ secrets.APPLE_CERTIFICATE_PART1 }}
           APPLE_CERTIFICATE_PART2: ${{ secrets.APPLE_CERTIFICATE_PART2 }}
           APPLE_CERTIFICATE_PART3: ${{ secrets.APPLE_CERTIFICATE_PART3 }}
+          APPLE_CERTIFICATE_PART4: ${{ secrets.APPLE_CERTIFICATE_PART4 }}
         run: |
-          COMBINED=$(echo -n "${APPLE_CERTIFICATE_PART1}${APPLE_CERTIFICATE_PART2}${APPLE_CERTIFICATE_PART3}" | tr -d '\n')
+          COMBINED="${APPLE_CERTIFICATE_PART1}${APPLE_CERTIFICATE_PART2}${APPLE_CERTIFICATE_PART3}${APPLE_CERTIFICATE_PART4}"
           echo "APPLE_CERTIFICATE=$COMBINED" >> $GITHUB_ENV
 
       - name: import developer certs
@@ -63,10 +64,11 @@ jobs:
           security find-identity -v -p codesigning build.keychain
 
       - name: verify certificate
+        id: verify_cert
         run: |
           CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
           CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
-          echo "CERT_ID=$CERT_ID" >> $GITHUB_ENV
+          echo "cert_id=$CERT_ID" >> $GITHUB_OUTPUT
 
       - name: build and publish
         uses: tauri-apps/tauri-action@v0.6.0
@@ -77,7 +79,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_CERTIFICATE: ${{ env.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ env.CERT_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ steps.verify_cert.outputs.cert_id }}
         with:
           tagName: app-v__VERSION__
           releaseName: 'App v__VERSION__'
