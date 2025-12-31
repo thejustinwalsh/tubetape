@@ -80,9 +80,16 @@ export class RegionPlayer {
       return;
     }
 
+    // Snap to sample boundaries (expand) for sample-accurate looping
+    const sampleRate = buffer.sampleRate;
+    const startSample = Math.floor(startTime * sampleRate);
+    const endSample = Math.ceil(endTime * sampleRate);
+    const snappedStart = startSample / sampleRate;
+    const snappedEnd = endSample / sampleRate;
+
     this.onEnded = onEnded ?? null;
     this.onProgress = onProgress ?? null;
-    this.regionDuration = endTime - startTime;
+    this.regionDuration = snappedEnd - snappedStart;
     this.isLooping = loop;
 
     this.sourceNode = this.audioContext.createBufferSource();
@@ -90,8 +97,8 @@ export class RegionPlayer {
     this.sourceNode.connect(this.gainNode);
 
     this.sourceNode.loop = loop;
-    this.sourceNode.loopStart = startTime;
-    this.sourceNode.loopEnd = endTime;
+    this.sourceNode.loopStart = snappedStart;
+    this.sourceNode.loopEnd = snappedEnd;
 
     this.sourceNode.onended = () => {
       this._isPlaying = false;
@@ -99,9 +106,9 @@ export class RegionPlayer {
       this.onEnded?.();
     };
 
-    const duration = loop ? undefined : endTime - startTime;
+    const duration = loop ? undefined : snappedEnd - snappedStart;
     this.playbackStartTime = this.audioContext.currentTime;
-    this.sourceNode.start(0, startTime, duration);
+    this.sourceNode.start(0, snappedStart, duration);
     this._isPlaying = true;
     this.startProgressLoop();
   }
