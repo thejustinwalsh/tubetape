@@ -33,10 +33,9 @@ Perfect for:
 - **Retro UI** - Beautiful 80s-inspired interface that's both functional and fun
 
 > **👷 MVP -- Some Features Still in Development**
-
-<div align="center">
-  <img src="docs/assets/hero.gif" alt="Tubetape Demo" width="800">
-</div>
+> <div align="center">
+>  <img src="docs/assets/hero.gif" alt="Tubetape Demo" width="800">
+> </div>
 
 ---
 
