@@ -69,7 +69,7 @@ jobs:
           echo "CERT_ID=$CERT_ID" >> $GITHUB_ENV
 
       - name: build and publish
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0.6.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
