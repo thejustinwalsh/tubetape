@@ -88,8 +88,6 @@ where
         .arg("--progress")
         .arg("--socket-timeout")
         .arg("30")
-        .arg("--extractor-args")
-        .arg("youtube:player_client=web")
         .arg(url)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -112,12 +110,14 @@ where
 
     let mut stdout_done = false;
     let mut stderr_done = false;
+    let mut stderr_output = Vec::new();
 
     while !stdout_done || !stderr_done {
         tokio::select! {
             line = stdout_reader.next_line(), if !stdout_done => {
                 match line {
                     Ok(Some(text)) => {
+                        eprintln!("[tubetape] stdout: {}", text);
                         if let Some(caps) = PROGRESS_REGEX.captures(&text) {
                             if let Some(pct) = caps.get(1) {
                                 if let Ok(percent) = pct.as_str().parse::<f64>() {
@@ -133,6 +133,8 @@ where
             line = stderr_reader.next_line(), if !stderr_done => {
                 match line {
                     Ok(Some(text)) => {
+                        eprintln!("[tubetape] stderr: {}", text);
+                        stderr_output.push(text.clone());
                         if let Some(caps) = PROGRESS_REGEX.captures(&text) {
                             if let Some(pct) = caps.get(1) {
                                 if let Ok(percent) = pct.as_str().parse::<f64>() {
@@ -157,7 +159,36 @@ where
 
     if !status.success() {
         eprintln!("[tubetape] yt-dlp failed with status: {}", status);
-        return Err(format!("yt-dlp exited with status: {} (exit code: {}). This usually means yt-dlp encountered an error downloading from YouTube. Try updating yt-dlp: brew upgrade yt-dlp", status, status.code().unwrap_or(-1)));
+        
+        // Find relevant error messages from stderr
+        let error_hints: Vec<_> = stderr_output.iter()
+            .filter(|line| {
+                line.contains("ERROR") || 
+                line.contains("error") ||
+                line.contains("WARNING") ||
+                line.contains("unavailable") ||
+                line.contains("unable") ||
+                line.contains("failed") ||
+                line.contains("Sign in")
+            })
+            .cloned()
+            .collect();
+        
+        let error_msg = if !error_hints.is_empty() {
+            format!(
+                "yt-dlp failed (exit code: {}). Error details:\n{}",
+                status.code().unwrap_or(-1),
+                error_hints.join("\n")
+            )
+        } else {
+            format!(
+                "yt-dlp failed (exit code: {}). No specific error found in output.\n\nFull stderr:\n{}",
+                status.code().unwrap_or(-1),
+                stderr_output.join("\n")
+            )
+        };
+        
+        return Err(error_msg);
     }
 
     eprintln!("[tubetape] yt-dlp completed successfully");
