@@ -37,8 +37,6 @@ Perfect for:
 >  <img src="docs/assets/hero.gif" alt="Tubetape Demo" width="800">
 > </div>
 
----
-
 ## 🛠️ Tech Stack
 
 Built with modern, blazing-fast technologies:
