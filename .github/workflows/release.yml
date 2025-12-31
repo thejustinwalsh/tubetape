@@ -38,37 +38,20 @@ jobs:
       - name: install frontend deps
         run: bun install
 
-      - name: combine certificate parts
-        env:
-          APPLE_CERTIFICATE_PART1: ${{ secrets.APPLE_CERTIFICATE_PART1 }}
-          APPLE_CERTIFICATE_PART2: ${{ secrets.APPLE_CERTIFICATE_PART2 }}
-          APPLE_CERTIFICATE_PART3: ${{ secrets.APPLE_CERTIFICATE_PART3 }}
-          APPLE_CERTIFICATE_PART4: ${{ secrets.APPLE_CERTIFICATE_PART4 }}
-        run: |
-          COMBINED="${APPLE_CERTIFICATE_PART1}${APPLE_CERTIFICATE_PART2}${APPLE_CERTIFICATE_PART3}${APPLE_CERTIFICATE_PART4}"
-          echo "APPLE_CERTIFICATE=$COMBINED" >> $GITHUB_ENV
-
       - name: import developer certs
         env:
-          APPLE_CERTIFICATE: ${{ env.APPLE_CERTIFICATE }}   
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          echo "Base64 length: ${#APPLE_CERTIFICATE}"
-          echo "First 100 chars: ${APPLE_CERTIFICATE:0:100}"
           echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
-          ls -lh certificate.p12
-          file certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
-          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -A
-          echo "=== Checking what was imported ==="
-          security find-identity -v build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           security find-identity -v -p codesigning build.keychain
-          echo "=== Setting partition list ==="
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" build.keychain
 
       - name: verify certificate
         id: verify_cert
