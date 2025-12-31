@@ -9,7 +9,7 @@ import VideoUnfurl from "./components/VideoUnfurl";
 import Waveform from "./components/Waveform";
 import SampleWaveform from "./components/SampleWaveform";
 import { getDatabase, generateSampleId, type SampleDocType, type TubetapeDatabase } from "./db";
-import type { VideoMetadata, ExtractionEvent, AppState, Project, CachedAudioInfo } from "./types";
+import type { VideoMetadata, ExtractionEvent, AppState, Project, CachedAudioInfo, AudioInfo } from "./types";
 import { useAppStats } from "./hooks/useAppStats";
 
 function App() {
@@ -26,6 +26,7 @@ function App() {
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
+  const [audioInfo, setAudioInfo] = useState<AudioInfo | null>(null);
 
   useEffect(() => {
     getDatabase().then(setDb);
@@ -85,6 +86,9 @@ function App() {
       setProgress({ percent: 0, status: "Starting..." });
 
       const channel = new Channel<ExtractionEvent>();
+      let totalPeaks = 0;
+      let peaksProcessed = 0;
+      let audioSampleRate: number | null = null;
 
       channel.onmessage = (event) => {
         switch (event.event) {
@@ -94,11 +98,27 @@ function App() {
           case "progress":
             setProgress({ percent: event.data.percent, status: event.data.status });
             break;
+          case "audioInfo":
+            audioSampleRate = event.data.sample_rate;
+            break;
+          case "waveformProgress":
+            totalPeaks = event.data.total_peaks;
+            peaksProcessed = 0;
+            setProgress({ percent: 0, status: "Generating waveform..." });
+            break;
           case "waveformChunk":
+            // Track peaks as they come in
+            peaksProcessed += event.data.peaks.length;
+            const percent = totalPeaks > 0 ? Math.min(98, (peaksProcessed / totalPeaks) * 100) : 0;
+            setProgress({ percent, status: "Generating waveform..." });
             break;
           case "completed":
             setAudioPath(event.data.audio_path);
             setDuration(event.data.duration_secs);
+            setAudioInfo({
+              sampleRate: audioSampleRate || 44100,
+              durationSecs: event.data.duration_secs,
+            });
             setProgress(null);
             setAppState("ready");
             refetchStats();
@@ -129,6 +149,7 @@ function App() {
     setSelectedRegion(null);
     setAudioBuffer(null);
     setCurrentProject(null);
+    setAudioInfo(null);
   }, []);
 
   const handleSelectProject = useCallback(async (project: Project) => {
@@ -155,6 +176,10 @@ function App() {
         });
         setAudioPath(cachedAudio.audioPath);
         setDuration(cachedAudio.durationSecs);
+        setAudioInfo({
+          sampleRate: cachedAudio.sampleRate,
+          durationSecs: cachedAudio.durationSecs,
+        });
         setCurrentProject(project);
         setAppState("ready");
       } else {
@@ -332,10 +357,11 @@ function App() {
 
             <div className="flex-none p-4 border-b border-retro-surface-light bg-retro-dark/50">
               <div className="h-44">
-                {audioPath ? (
+                {audioPath && audioInfo ? (
                   <Waveform
                     audioPath={audioPath}
-                    durationSecs={duration || undefined}
+                    durationSecs={duration}
+                    audioInfo={audioInfo}
                     isStreaming={appState === "extracting"}
                     onRegionSelect={handleRegionSelect}
                     onClipSample={handleClipSample}

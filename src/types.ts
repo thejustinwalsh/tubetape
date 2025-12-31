@@ -9,9 +9,16 @@ export interface VideoMetadata {
 export type ExtractionEvent =
   | { event: "started"; data: { video_id: string } }
   | { event: "progress"; data: { percent: number; status: string } }
+  | { event: "audioInfo"; data: { sample_rate: number } }
+  | { event: "waveformProgress"; data: { total_peaks: number } }
   | { event: "waveformChunk"; data: { peaks: number[]; offset: number } }
   | { event: "completed"; data: { audio_path: string; duration_secs: number } }
   | { event: "error"; data: { message: string } };
+
+export interface AudioInfo {
+  sampleRate: number;
+  durationSecs: number;
+}
 
 export interface WaveformData {
   peaks: number[];
@@ -24,6 +31,7 @@ export type AppState = "idle" | "loading-metadata" | "extracting" | "ready" | "e
 export interface CachedAudioInfo {
   audioPath: string;
   durationSecs: number;
+  sampleRate: number;
 }
 
 export interface Project {

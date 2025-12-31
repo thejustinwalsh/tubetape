@@ -25,6 +25,12 @@ pub enum ExtractionEvent {
         percent: f64,
         status: String,
     },
+    AudioInfo {
+        sample_rate: u32,
+    },
+    WaveformProgress {
+        total_peaks: usize,
+    },
     WaveformChunk {
         peaks: Vec<f32>,
         offset: usize,
@@ -96,16 +102,32 @@ async fn extract_audio(
         output_path.exists()
     );
 
+    let (duration_secs, sample_rate) = audio::get_audio_info(&output_path)?;
+    let expected_peaks = audio::estimate_peak_count(duration_secs, sample_rate);
+    
+    println!(
+        "[tubetape] Audio info: {} seconds, {} Hz sample rate, expecting ~{} peaks",
+        duration_secs, sample_rate, expected_peaks
+    );
+
     let _ = on_event.send(ExtractionEvent::Progress {
-        percent: 100.0,
+        percent: 0.0,
         status: "Generating waveform...".to_string(),
     });
 
-    let waveform = match audio::generate_waveform_peaks(&output_path, |peaks, offset| {
-        let _ = on_event.send(ExtractionEvent::WaveformChunk {
+    let _ = on_event.send(ExtractionEvent::AudioInfo { sample_rate });
+    let _ = on_event.send(ExtractionEvent::WaveformProgress {
+        total_peaks: expected_peaks,
+    });
+
+    let on_event_clone = on_event.clone();
+    let waveform = match audio::generate_waveform_peaks(&output_path, move |peaks, offset| {
+        if let Err(e) = on_event_clone.send(ExtractionEvent::WaveformChunk {
             peaks: peaks.to_vec(),
             offset,
-        });
+        }) {
+            eprintln!("[tubetape] Failed to send waveform chunk event: {}", e);
+        }
     }) {
         Ok(w) => {
             println!(
@@ -113,6 +135,7 @@ async fn extract_audio(
                 w.peaks.len(),
                 w.duration_secs
             );
+            
             w
         }
         Err(e) => {
@@ -152,10 +175,11 @@ async fn check_cached_audio(
     let audio_path = output_dir.join(format!("{}.mp3", video_id));
 
     if audio_path.exists() {
-        let waveform = audio::generate_waveform_peaks(&audio_path, |_, _| {})?;
+        let (duration_secs, sample_rate) = audio::get_audio_info(&audio_path)?;
         Ok(Some(CachedAudioInfo {
             audio_path: audio_path.to_string_lossy().to_string(),
-            duration_secs: waveform.duration_secs,
+            duration_secs,
+            sample_rate,
         }))
     } else {
         Ok(None)
@@ -167,6 +191,7 @@ async fn check_cached_audio(
 pub struct CachedAudioInfo {
     pub audio_path: String,
     pub duration_secs: f64,
+    pub sample_rate: u32,
 }
 
 #[tauri::command]

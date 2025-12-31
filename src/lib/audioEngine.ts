@@ -14,11 +14,10 @@ export class RegionPlayer {
     return this._isPlaying;
   }
 
-  async init(): Promise<AudioContext> {
+  async init(sampleRate: number, sharedContext?: AudioContext): Promise<AudioContext> {
     if (!this.audioContext) {
-      this.audioContext = new AudioContext();
-      this.gainNode = this.audioContext.createGain();
-      this.gainNode.connect(this.audioContext.destination);
+      this.audioContext = sharedContext || new AudioContext({ sampleRate });
+      this.setupAudioNodes();
     }
     
     if (this.audioContext.state === "suspended") {
@@ -26,6 +25,12 @@ export class RegionPlayer {
     }
     
     return this.audioContext;
+  }
+
+  private setupAudioNodes(): void {
+    if (!this.audioContext) return;
+    this.gainNode = this.audioContext.createGain();
+    this.gainNode.connect(this.audioContext.destination);
   }
 
   private startProgressLoop(): void {

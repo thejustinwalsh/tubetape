@@ -25,7 +25,7 @@ function SampleWaveform({
   const [isLooping, setIsLooping] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(name);
-  const { isPlaying, progress, toggle, stop } = useRegionPlayer();
+  const { isPlaying, progress, toggle, stop } = useRegionPlayer({ sampleRate: audioBuffer.sampleRate });
 
   const duration = endTime - startTime;
 

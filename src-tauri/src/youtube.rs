@@ -86,6 +86,10 @@ where
         .arg("--newline")
         .arg("--no-playlist")
         .arg("--progress")
+        .arg("--socket-timeout")
+        .arg("30")
+        .arg("--extractor-args")
+        .arg("youtube:player_client=web")
         .arg(url)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -152,8 +156,11 @@ where
         .map_err(|e| format!("Failed to wait for yt-dlp: {}", e))?;
 
     if !status.success() {
-        return Err(format!("yt-dlp exited with status: {}", status));
+        eprintln!("[tubetape] yt-dlp failed with status: {}", status);
+        return Err(format!("yt-dlp exited with status: {} (exit code: {}). This usually means yt-dlp encountered an error downloading from YouTube. Try updating yt-dlp: brew upgrade yt-dlp", status, status.code().unwrap_or(-1)));
     }
+
+    eprintln!("[tubetape] yt-dlp completed successfully");
 
     let expected_mp3 = output_dir.join(format!("{}.mp3", stem));
     if expected_mp3.exists() {

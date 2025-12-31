@@ -11,6 +11,51 @@ use crate::WaveformData;
 const SAMPLES_PER_PEAK: usize = 256;
 const CHUNK_SIZE: usize = 1000;
 
+pub fn estimate_peak_count(duration_secs: f64, sample_rate: u32) -> usize {
+    let total_samples = (duration_secs * sample_rate as f64) as usize;
+    (total_samples / SAMPLES_PER_PEAK) + 1 // +1 for rounding
+}
+
+pub fn get_audio_info(audio_path: &Path) -> Result<(f64, u32), String> {
+    let file =
+        std::fs::File::open(audio_path).map_err(|e| format!("Failed to open audio file: {}", e))?;
+
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+    let mut hint = Hint::new();
+    if let Some(ext) = audio_path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    let format_opts = FormatOptions::default();
+    let metadata_opts = MetadataOptions::default();
+
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &format_opts, &metadata_opts)
+        .map_err(|e| format!("Failed to probe audio format: {}", e))?;
+
+    let format = probed.format;
+
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)
+        .ok_or_else(|| "No audio track found".to_string())?;
+
+    let sample_rate = track
+        .codec_params
+        .sample_rate
+        .ok_or_else(|| "Unknown sample rate".to_string())?;
+
+    let duration_secs = if let Some(n_frames) = track.codec_params.n_frames {
+        n_frames as f64 / sample_rate as f64
+    } else {
+        0.0
+    };
+
+    Ok((duration_secs, sample_rate))
+}
+
 pub fn generate_waveform_peaks<F>(
     audio_path: &Path,
     mut on_chunk: F,

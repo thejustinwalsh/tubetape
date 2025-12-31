@@ -1,14 +1,14 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import { RegionPlayer } from "../lib/audioEngine";
 
-export function useRegionPlayer() {
+export function useRegionPlayer({ sampleRate }: { sampleRate: number }) {
   const playerRef = useRef<RegionPlayer | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
     playerRef.current = new RegionPlayer();
-    playerRef.current.init();
+    playerRef.current.init(sampleRate);
 
     return () => {
       playerRef.current?.destroy();

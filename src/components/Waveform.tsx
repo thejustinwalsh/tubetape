@@ -3,6 +3,7 @@ import { readFile } from "@tauri-apps/plugin-fs";
 import WaveSurfer from "wavesurfer.js";
 import RegionsPlugin, { type Region } from "wavesurfer.js/dist/plugins/regions.js";
 import { RegionPlayer } from "../lib/audioEngine";
+import type { AudioInfo } from "../types";
 
 export interface RegionSelection {
   start: number;
@@ -11,14 +12,15 @@ export interface RegionSelection {
 
 interface WaveformProps {
   audioPath: string | null;
-  durationSecs?: number;
+  durationSecs: number;
+  audioInfo: AudioInfo;
   isStreaming?: boolean;
   onRegionSelect?: (region: RegionSelection | null) => void;
   onClipSample?: (region: RegionSelection) => void;
   onAudioBufferReady?: (buffer: AudioBuffer) => void;
 }
 
-function Waveform({ audioPath, durationSecs, isStreaming, onRegionSelect, onClipSample, onAudioBufferReady }: WaveformProps) {
+function Waveform({ audioPath, durationSecs, audioInfo, isStreaming, onRegionSelect, onClipSample, onAudioBufferReady }: WaveformProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
   const regionsRef = useRef<RegionsPlugin | null>(null);
@@ -55,6 +57,8 @@ function Waveform({ audioPath, durationSecs, isStreaming, onRegionSelect, onClip
       barRadius: 0,
       height: containerHeight,
       normalize: true,
+      backend: 'WebAudio',
+      sampleRate: audioInfo.sampleRate,
       plugins: [regions],
     });
 
@@ -125,18 +129,18 @@ function Waveform({ audioPath, durationSecs, isStreaming, onRegionSelect, onClip
         URL.revokeObjectURL(blobUrlRef.current);
       }
     };
-  }, [onRegionSelect]);
+  }, [audioInfo.sampleRate, onRegionSelect]);
 
   useEffect(() => {
     const player = new RegionPlayer();
-    player.init().catch(console.error);
+    player.init(audioInfo.sampleRate).catch(console.error);
     regionPlayerRef.current = player;
 
     return () => {
       player.destroy();
       regionPlayerRef.current = null;
     };
-  }, []);
+  }, [audioInfo.sampleRate]);
 
   useEffect(() => {
     if (!wavesurferRef.current || !audioPath) return;
