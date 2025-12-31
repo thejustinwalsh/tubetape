@@ -3,10 +3,11 @@
   <p><strong>Extract, Sample, and Loop Audio from YouTube Videos</strong></p>
   <p>A lightning-fast desktop app for music producers, beat makers, and audio enthusiasts</p>
   
-  ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+  ![License](https://img.shields.io/badge/license-MIT-green.svg)
   ![Tauri](https://img.shields.io/badge/Tauri-2.0-24C8D8?logo=tauri)
   ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)
-  ![Rust](https://img.shields.io/badge/Rust-Latest-orange?logo=rust)
+  ![Rust](https://img.shields.io/badge/Rust-Latest-CE422B?logo=rust)
+  ![OpenCode](https://img.shields.io/badge/⚡_OpenCode-oMo-7B3FF5?style=flat)
   
 </div>
 
