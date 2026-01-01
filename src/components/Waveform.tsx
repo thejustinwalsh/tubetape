@@ -37,7 +37,6 @@ function Waveform({ audioPath, durationSecs, audioInfo, isStreaming, onRegionSel
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedRegion, setSelectedRegion] = useState<RegionSelection | null>(null);
-
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -129,7 +128,7 @@ function Waveform({ audioPath, durationSecs, audioInfo, isStreaming, onRegionSel
         URL.revokeObjectURL(blobUrlRef.current);
       }
     };
-  }, [audioInfo.sampleRate, onRegionSelect]);
+  }, [audioInfo.sampleRate, onRegionSelect, onAudioBufferReady]);
 
   useEffect(() => {
     const player = new RegionPlayer();
@@ -363,7 +362,7 @@ function Waveform({ audioPath, durationSecs, audioInfo, isStreaming, onRegionSel
         
         <div
           ref={containerRef}
-          className="absolute left-2 right-2 top-2 bottom-2"
+          style={{ position: 'absolute', left: '8px', right: '8px', top: '8px', bottom: '8px' }}
         />
 
         {error && (

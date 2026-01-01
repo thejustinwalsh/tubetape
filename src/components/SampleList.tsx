@@ -67,7 +67,11 @@ function SampleList({ samples, onDelete, onUpdateName }: SampleListProps) {
   if (samples.length === 0) {
     return (
       <div className="text-center py-8">
-        <div className="text-4xl mb-2">✂️</div>
+        <div className="text-4xl mb-2 flex justify-center text-cyber-700">
+          <svg className="w-12 h-12" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" />
+          </svg>
+        </div>
         <p className="text-cyber-600 text-sm">No samples yet</p>
         <p className="text-cyber-700 text-xs mt-1">Drag on the waveform to create a selection</p>
       </div>

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { Project } from "../types";
+import { isYouTubeUrl, extractVideoId } from "../lib/youtube";
 
 interface ProjectComboboxProps {
   projects: Project[];
@@ -20,10 +21,13 @@ function ProjectCombobox({
 }: ProjectComboboxProps) {
   const [inputValue, setInputValue] = useState("");
   const [isOpen, setIsOpen] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const isActive = isOpen || isFocused;
 
   const filteredProjects = inputValue
     ? projects.filter((p) =>
@@ -185,21 +189,25 @@ function ProjectCombobox({
           onChange={handleInputChange}
           onPaste={handlePaste}
           onKeyDown={handleKeyDown}
-          onFocus={() => projects.length > 0 && setIsOpen(true)}
+          onFocus={() => {
+            setIsFocused(true);
+            if (projects.length > 0) setIsOpen(true);
+          }}
+          onBlur={() => setIsFocused(false)}
           placeholder={projects.length > 0 ? "Paste URL or select project..." : "Paste YouTube URL..."}
           disabled={disabled}
-          className={`flex-1 min-w-0 h-7 px-3 bg-retro-surface border border-r-0 rounded-l text-cyber-100 placeholder-cyber-600 text-sm focus:outline-none focus:ring-0 transition-colors disabled:opacity-50 ${isOpen || document.activeElement === inputRef.current
+          className={`flex-1 min-w-0 h-7 px-3 bg-retro-surface border border-r-0 rounded-l text-cyber-100 placeholder-cyber-600 text-sm focus:outline-none focus:ring-0 transition-colors disabled:opacity-50 ${isActive
               ? "border-neon-cyan"
-              : "border-retro-surface-light focus:border-neon-cyan"
+              : "border-retro-surface-light"
             }`}
         />
         <button
           type="button"
           onClick={toggleDropdown}
           disabled={disabled || projects.length === 0}
-          className={`h-7 w-7 flex-none flex items-center justify-center bg-retro-surface border border-l-0 rounded-r transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isOpen
+          className={`h-7 w-7 flex-none flex items-center justify-center bg-retro-surface border border-l-0 rounded-r transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isActive
               ? "border-neon-cyan"
-              : "border-retro-surface-light group-focus-within:border-neon-cyan group-hover:border-retro-surface-light"
+              : "border-retro-surface-light"
             }`}
           title={projects.length > 0 ? "Show projects" : "No projects yet"}
         >
@@ -246,26 +254,6 @@ function ProjectCombobox({
       )}
     </div>
   );
-}
-
-function isYouTubeUrl(url: string): boolean {
-  return /(?:youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/)|youtu\.be\/)/.test(url);
-}
-
-function extractVideoId(url: string): string | null {
-  const patterns = [
-    /youtube\.com\/watch\?v=([^&]+)/,
-    /youtube\.com\/embed\/([^?]+)/,
-    /youtube\.com\/v\/([^?]+)/,
-    /youtube\.com\/shorts\/([^?]+)/,
-    /youtu\.be\/([^?]+)/,
-  ];
-
-  for (const pattern of patterns) {
-    const match = url.match(pattern);
-    if (match) return match[1];
-  }
-  return null;
 }
 
 export default ProjectCombobox;

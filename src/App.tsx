@@ -8,7 +8,7 @@ import CassetteTape from "./components/CassetteTape";
 import VideoUnfurl from "./components/VideoUnfurl";
 import Waveform from "./components/Waveform";
 import SampleWaveform from "./components/SampleWaveform";
-import { getDatabase, generateSampleId, type SampleDocType, type TubetapeDatabase } from "./db";
+import { getDatabase, generateSampleId, type SampleDocType, type TubetapeDatabase } from "./lib/db";
 import type { VideoMetadata, ExtractionEvent, AppState, Project, CachedAudioInfo, AudioInfo } from "./types";
 import { useAppStats } from "./hooks/useAppStats";
 
