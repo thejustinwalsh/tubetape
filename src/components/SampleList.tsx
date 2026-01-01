@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import type { SampleDocType } from "../db";
+import type { SampleDocType } from "../lib/db";
 
 interface SampleListProps {
   samples: SampleDocType[];
