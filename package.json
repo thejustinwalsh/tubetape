@@ -94,7 +94,7 @@
     "quickjs": {
       "type": "source",
       "repo": "bellard/quickjs",
-      "sha": "fa628f8c523ecac8ce560c081411e91fcaba2d20"
+      "sha": "de4d3927b8edff5fbfee1f69cfeef840844259e9"
     }
   }
 }
