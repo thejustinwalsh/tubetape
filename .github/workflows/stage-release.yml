@@ -6,6 +6,10 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: stage-release
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
@@ -23,11 +27,6 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-
-      - name: Install git-cliff
-        run: |
-          curl -sSfL https://github.com/orhun/git-cliff/releases/download/v2.7.0/git-cliff-2.7.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
-          echo "$PWD/git-cliff-2.7.0" >> $GITHUB_PATH
 
       - name: Install yq
         uses: dcarbone/install-yq-action@v1.3.1
@@ -117,10 +116,14 @@ jobs:
 
       - name: Generate changelog
         if: steps.version.outputs.needs_release == 'true'
-        run: |
-          NEW_VERSION="${{ steps.version.outputs.version }}"
-          git-cliff --tag "v$NEW_VERSION" -o CHANGELOG.md
-          cat CHANGELOG.md
+        uses: orhun/git-cliff-action@v4
+        id: changelog
+        with:
+          config: cliff.toml
+          args: --tag v${{ steps.version.outputs.version }}
+        env:
+          OUTPUT: CHANGELOG.md
+          GITHUB_REPO: ${{ github.repository }}
 
       - name: Update existing release branch
         if: steps.version.outputs.needs_release == 'true' && steps.check_pr.outputs.branch_exists == 'true'
@@ -131,12 +134,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          git checkout -b "$BRANCH"
+          git checkout -B "$BRANCH"
           git add -A
           git commit -m "chore(release): prepare v$NEW_VERSION"
           
-          # Force push to update the existing branch
-          git push origin "$BRANCH" --force
+          # Force push to update the existing branch (force-with-lease prevents race conditions)
+          git push origin "$BRANCH" --force-with-lease
           
           echo "Updated existing branch $BRANCH"
 
@@ -149,10 +152,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          git checkout -b "$BRANCH"
+          git checkout -B "$BRANCH"
           git add -A
           git commit -m "chore(release): prepare v$NEW_VERSION"
-          git push origin "$BRANCH"
+          
+          # Use force-with-lease to handle race conditions if another run created the branch
+          git push origin "$BRANCH" --force-with-lease
           
           echo "Created new branch $BRANCH"
 
