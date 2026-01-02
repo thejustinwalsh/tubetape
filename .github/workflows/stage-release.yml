@@ -51,7 +51,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Install semantic-release and plugins
-          bun add -d semantic-release @semantic-release/commit-analyzer
+          bun add -d semantic-release @semantic-release/commit-analyzer conventional-changelog-conventionalcommits
           
           # Run semantic-release in dry-run mode to get next version
           OUTPUT=$(bunx semantic-release --dry-run --no-ci 2>&1) || true
