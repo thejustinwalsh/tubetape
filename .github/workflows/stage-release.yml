@@ -43,7 +43,7 @@ jobs:
             | wget -qi - \
             && mv dasel_linux_amd64 /usr/local/bin/dasel \
             && chmod +x /usr/local/bin/dasel
-          dasel --version
+          dasel version
 
       - name: Get current released version
         id: current
