@@ -12,6 +12,7 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:61000',
     trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
   },
   webServer: {
     command: 'bun run ladle:build && bun run ladle:preview',
