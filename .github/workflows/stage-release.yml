@@ -89,7 +89,7 @@ jobs:
         id: branch
         run: |
           CURRENT_VERSION="${{ steps.current.outputs.version }}"
-          BRANCH="release/v${CURRENT_VERSION}-next"
+          BRANCH="staging/v${CURRENT_VERSION}-next"
           echo "name=$BRANCH" >> $GITHUB_OUTPUT
           echo "Release branch: $BRANCH"
 
