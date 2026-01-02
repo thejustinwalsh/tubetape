@@ -7,7 +7,7 @@
   ![Tauri](https://img.shields.io/badge/Tauri-2.0-24C8D8?logo=tauri)
   ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)
   ![Rust](https://img.shields.io/badge/Rust-Latest-CE422B?logo=rust)
-  ![OpenCode](https://img.shields.io/badge/⚡_OpenCode-oMo-7B3FF5?style=flat)
+  ![OpenCode](https://img.shields.io/badge/⚡_OpenCode-OmO-7B3FF5?style=flat)
   
 </div>
 
