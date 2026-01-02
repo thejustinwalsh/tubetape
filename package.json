@@ -74,11 +74,27 @@
     "wavesurfer.js@7.12.1": "patches/wavesurfer.js@7.12.1.patch"
   },
   "release": {
-    "branches": ["main"],
+    "branches": [
+      "main"
+    ],
     "plugins": [
-      ["@semantic-release/commit-analyzer", {
-        "preset": "conventionalcommits"
-      }]
+      [
+        "@semantic-release/commit-analyzer",
+        {
+          "preset": "conventionalcommits"
+        }
+      ]
     ]
+  },
+  "binaryDeps": {
+    "deno": {
+      "type": "release",
+      "repo": "denoland/deno"
+    },
+    "quickjs": {
+      "type": "source",
+      "repo": "bellard/quickjs",
+      "sha": "de4d3927b8edff5fbfee1f69cfeef840844259e9"
+    }
   }
 }
