@@ -50,11 +50,11 @@ jobs:
         run: |
           OUTPUT=$(bun run scripts/get-next-version.ts 2>&1 | tail -n 1)
           echo "$OUTPUT"
-          echo "tag=$(echo "$OUTPUT" | dasel -i json '.tag')" >> $GITHUB_OUTPUT
-          echo "version=$(echo "$OUTPUT" | dasel -i json '.version')" >> $GITHUB_OUTPUT
-          echo "sha=$(echo "$OUTPUT" | dasel -i json '.sha')" >> $GITHUB_OUTPUT
-          echo "next_version=$(echo "$OUTPUT" | dasel -i json '.nextVersion')" >> $GITHUB_OUTPUT
-          echo "needs_release=$(echo "$OUTPUT" | dasel -i json '.needsRelease')" >> $GITHUB_OUTPUT
+          echo "tag=$(echo "$OUTPUT" | dasel -i json 'tag')" >> $GITHUB_OUTPUT
+          echo "version=$(echo "$OUTPUT" | dasel -i json 'version')" >> $GITHUB_OUTPUT
+          echo "sha=$(echo "$OUTPUT" | dasel -i json 'sha')" >> $GITHUB_OUTPUT
+          echo "next_version=$(echo "$OUTPUT" | dasel -i json 'nextVersion')" >> $GITHUB_OUTPUT
+          echo "needs_release=$(echo "$OUTPUT" | dasel -i json 'needsRelease')" >> $GITHUB_OUTPUT
 
       - name: Set release branch name
         if: steps.version.outputs.needs_release == 'true'
