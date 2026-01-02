@@ -67,5 +67,11 @@
   },
   "patchedDependencies": {
     "wavesurfer.js@7.12.1": "patches/wavesurfer.js@7.12.1.patch"
+  },
+  "release": {
+    "branches": ["main"],
+    "plugins": [
+      ["@semantic-release/commit-analyzer", { "preset": "conventionalcommits" }]
+    ]
   }
 }

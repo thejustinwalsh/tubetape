@@ -1,0 +1,224 @@
+name: Stage Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install git-cliff
+        run: |
+          curl -sSfL https://github.com/orhun/git-cliff/releases/download/v2.7.0/git-cliff-2.7.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          echo "$PWD/git-cliff-2.7.0" >> $GITHUB_PATH
+
+      - name: Get current released version
+        id: current
+        run: |
+          # Get the latest release tag, fallback to v0.0.0 if none exists
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          CURRENT_VERSION="${LATEST_TAG#v}"
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Current released version: $CURRENT_VERSION"
+
+      - name: Determine next version with semantic-release
+        id: version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Install semantic-release and plugins
+          bun add -d semantic-release @semantic-release/commit-analyzer
+          
+          # Run semantic-release in dry-run mode to get next version
+          OUTPUT=$(bunx semantic-release --dry-run --no-ci 2>&1) || true
+          echo "$OUTPUT"
+          
+          # Extract the next version from output
+          NEXT_VERSION=$(echo "$OUTPUT" | grep -oP 'The next release version is \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+          
+          if [ -z "$NEXT_VERSION" ]; then
+            echo "No release needed or could not determine version"
+            echo "needs_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "Next version: $NEXT_VERSION"
+          echo "version=$NEXT_VERSION" >> $GITHUB_OUTPUT
+          echo "needs_release=true" >> $GITHUB_OUTPUT
+
+      - name: Set release branch name
+        if: steps.version.outputs.needs_release == 'true'
+        id: branch
+        run: |
+          CURRENT_VERSION="${{ steps.current.outputs.version }}"
+          BRANCH="release/v${CURRENT_VERSION}-next"
+          echo "name=$BRANCH" >> $GITHUB_OUTPUT
+          echo "Release branch: $BRANCH"
+
+      - name: Check for existing release PR
+        if: steps.version.outputs.needs_release == 'true'
+        id: check_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ steps.branch.outputs.name }}"
+          
+          # Check if branch exists on remote
+          if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
+            echo "branch_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "branch_exists=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check for open PR from this branch to release
+          OPEN_PR=$(gh pr list --base release --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          
+          if [ -n "$OPEN_PR" ]; then
+            echo "pr_exists=true" >> $GITHUB_OUTPUT
+            echo "pr_number=$OPEN_PR" >> $GITHUB_OUTPUT
+            echo "Found open PR #$OPEN_PR"
+          else
+            echo "pr_exists=false" >> $GITHUB_OUTPUT
+            echo "No open PR found"
+          fi
+
+      - name: Update version in tauri.conf.json
+        if: steps.version.outputs.needs_release == 'true'
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.version }}"
+          jq --arg v "$NEW_VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json
+          mv tmp.json src-tauri/tauri.conf.json
+
+      - name: Update version in Cargo.toml
+        if: steps.version.outputs.needs_release == 'true'
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.version }}"
+          yq -i ".package.version = \"$NEW_VERSION\"" -o toml src-tauri/Cargo.toml
+
+      - name: Generate changelog
+        if: steps.version.outputs.needs_release == 'true'
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.version }}"
+          git-cliff --tag "v$NEW_VERSION" -o CHANGELOG.md
+          cat CHANGELOG.md
+
+      - name: Update existing release branch
+        if: steps.version.outputs.needs_release == 'true' && steps.check_pr.outputs.branch_exists == 'true'
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.version }}"
+          BRANCH="${{ steps.branch.outputs.name }}"
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "chore(release): prepare v$NEW_VERSION"
+          
+          # Force push to update the existing branch
+          git push origin "$BRANCH" --force
+          
+          echo "Updated existing branch $BRANCH"
+
+      - name: Create new release branch
+        if: steps.version.outputs.needs_release == 'true' && steps.check_pr.outputs.branch_exists != 'true'
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.version }}"
+          BRANCH="${{ steps.branch.outputs.name }}"
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "chore(release): prepare v$NEW_VERSION"
+          git push origin "$BRANCH"
+          
+          echo "Created new branch $BRANCH"
+
+      - name: Create PR if none exists
+        if: steps.version.outputs.needs_release == 'true' && steps.check_pr.outputs.pr_exists != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.version }}"
+          BRANCH="${{ steps.branch.outputs.name }}"
+          
+          # Extract changelog (truncate to ~3000 chars for PR body limit)
+          CHANGELOG=$(head -c 3000 CHANGELOG.md)
+          if [ ${#CHANGELOG} -eq 3000 ]; then
+            CHANGELOG="${CHANGELOG}...
+
+          _Changelog truncated. See [CHANGELOG.md](CHANGELOG.md) for full details._"
+          fi
+          
+          # Write PR body to temp file to handle multiline properly
+          cat > /tmp/pr-body.md << EOF
+          ## Release v${NEW_VERSION}
+
+          This PR is automatically kept in sync with \`main\`.
+
+          ### Changes
+          ${CHANGELOG}
+
+          ---
+          **Merge this PR to trigger the release build.**
+          EOF
+          
+          gh pr create \
+            --base release \
+            --head "$BRANCH" \
+            --title "Release v$NEW_VERSION" \
+            --body-file /tmp/pr-body.md
+
+      - name: Update PR if exists
+        if: steps.version.outputs.needs_release == 'true' && steps.check_pr.outputs.pr_exists == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.version }}"
+          PR_NUMBER="${{ steps.check_pr.outputs.pr_number }}"
+          
+          # Extract changelog (truncate to ~3000 chars for PR body limit)
+          CHANGELOG=$(head -c 3000 CHANGELOG.md)
+          if [ ${#CHANGELOG} -eq 3000 ]; then
+            CHANGELOG="${CHANGELOG}...
+
+          _Changelog truncated. See [CHANGELOG.md](CHANGELOG.md) for full details._"
+          fi
+          
+          # Write PR body to temp file to handle multiline properly
+          cat > /tmp/pr-body.md << EOF
+          ## Release v${NEW_VERSION}
+
+          This PR is automatically kept in sync with \`main\`.
+
+          ### Changes
+          ${CHANGELOG}
+
+          ---
+          **Merge this PR to trigger the release build.**
+          EOF
+          
+          gh pr edit "$PR_NUMBER" \
+            --title "Release v$NEW_VERSION" \
+            --body-file /tmp/pr-body.md
+          
+          echo "Updated PR #$PR_NUMBER with latest changes"
