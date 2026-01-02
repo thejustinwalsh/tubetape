@@ -14,6 +14,10 @@
 - Missed db move update
 - Add visual test snapshots
 
+### 🚜 Refactor
+
+- Scripts to build quickjs and bundle (#11)
+
 ### ⚙️ Miscellaneous Tasks
 
 - Add git-cliff configuration for changelog generation

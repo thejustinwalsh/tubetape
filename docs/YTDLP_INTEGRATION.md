@@ -32,8 +32,8 @@ See: [yt-dlp EJS Wiki](https://github.com/yt-dlp/yt-dlp/wiki/EJS)
 - Manual version updates
 - Doesn't handle dynamic URLs if yt-dlp changes their release strategy
 
-#### Option B: EJS Template Processing
-- Bundle Deno or Node.js runtime for EJS evaluation
+#### Option B: EJS Template Processing (Implemented)
+- Bundle upstream QuickJS runtime for EJS evaluation (no JIT, hardened runtime compatible)
 - Download and parse yt-dlp's release configuration
 - Dynamically construct URLs using EJS templates
 - More complex but future-proof
@@ -41,10 +41,11 @@ See: [yt-dlp EJS Wiki](https://github.com/yt-dlp/yt-dlp/wiki/EJS)
 **Advantages:**
 - Future-proof against release strategy changes
 - Automatically handles platform detection
+- Upstream QuickJS supports macOS notarization (no JIT)
+- Faster than QuickJS-NG (yt-dlp warns QuickJS-NG is "missing optimizations making this very slow")
 
 **Disadvantages:**
-- Requires bundling a JS runtime
-- Increased binary size
+- Requires bundling a JS runtime (~2MB)
 - More complex initialization
 
 ### 2. Binary Management Architecture
@@ -60,7 +61,7 @@ app_cache/
 │   │   │   ├── windows-x86-64
 │   │   │   └── linux-x86-64
 │   │   └── checksums.json
-│   └── deno/ (if needed)
+│   └── qjs/
 └── metadata.json
 ```
 
@@ -175,8 +176,8 @@ async function extractAudioWithProgress(url: string) {
 - [ ] Better error messages for user
 - [ ] Cache corruption detection and recovery
 
-### Phase 3: Dynamic Template Processing (Optional)
-- [ ] Evaluate Deno for EJS processing
+### Phase 3: Dynamic Template Processing
+- [x] Bundle upstream QuickJS for EJS processing (hardened runtime, no JIT, faster than QuickJS-NG)
 - [ ] Implement template-based URL construction
 - [ ] Auto-detection of latest release
 - [ ] Periodic background updates

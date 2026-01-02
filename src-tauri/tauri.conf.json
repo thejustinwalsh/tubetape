@@ -4,9 +4,9 @@
     "version": "0.2.0",
     "identifier": "dev.tjw.tubetape",
     "build": {
-        "beforeDevCommand": "bun scripts/setup-deno.ts \u0026\u0026 bun run dev",
+        "beforeDevCommand": "bun scripts/setup-qjs.ts \u0026\u0026 bun run dev",
         "devUrl": "http://localhost:1420",
-        "beforeBuildCommand": "NODE_ENV=production bun scripts/setup-deno.ts \u0026\u0026 bun run build",
+        "beforeBuildCommand": "NODE_ENV=production bun scripts/setup-qjs.ts \u0026\u0026 bun run build",
         "frontendDist": "../dist"
     },
     "app": {
@@ -36,7 +36,7 @@
             "icons/icon.ico"
         ],
         "resources": [
-            "binaries/deno/*"
+            "binaries/qjs/*"
         ]
     }
 }
