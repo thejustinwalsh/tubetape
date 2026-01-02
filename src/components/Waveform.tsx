@@ -4,6 +4,7 @@ import WaveSurfer from "wavesurfer.js";
 import RegionsPlugin, { type Region } from "wavesurfer.js/dist/plugins/regions.js";
 import { RegionPlayer } from "../lib/audioEngine";
 import type { AudioInfo } from "../types";
+import ZoomSlider from "./ZoomSlider";
 
 export interface RegionSelection {
   start: number;
@@ -18,9 +19,11 @@ interface WaveformProps {
   onRegionSelect?: (region: RegionSelection | null) => void;
   onClipSample?: (region: RegionSelection) => void;
   onAudioBufferReady?: (buffer: AudioBuffer) => void;
+  /** Maximum zoom level (default: 32) */
+  maxZoom?: number;
 }
 
-function Waveform({ audioPath, durationSecs, audioInfo, isStreaming, onRegionSelect, onClipSample, onAudioBufferReady }: WaveformProps) {
+function Waveform({ audioPath, durationSecs, audioInfo, isStreaming, onRegionSelect, onClipSample, onAudioBufferReady, maxZoom = 32 }: WaveformProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
   const regionsRef = useRef<RegionsPlugin | null>(null);
@@ -29,6 +32,8 @@ function Waveform({ audioPath, durationSecs, audioInfo, isStreaming, onRegionSel
   const loadingRef = useRef<string | null>(null);
   const regionPlayerRef = useRef<RegionPlayer | null>(null);
   const audioBufferRef = useRef<AudioBuffer | null>(null);
+  const zoomRafRef = useRef<number | null>(null);
+  const pendingZoomRef = useRef<number | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLooping, setIsLooping] = useState(false);
   const [isRegionPlaying, setIsRegionPlaying] = useState(false);
@@ -37,6 +42,7 @@ function Waveform({ audioPath, durationSecs, audioInfo, isStreaming, onRegionSel
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedRegion, setSelectedRegion] = useState<RegionSelection | null>(null);
+  const [zoomLevel, setZoomLevel] = useState(1);
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -66,21 +72,66 @@ function Waveform({ audioPath, durationSecs, audioInfo, isStreaming, onRegionSel
     regions.enableDragSelection({
       color: "rgba(0, 245, 255, 0.2)",
     });
+    
+    // Helper to sync region player when region bounds change during playback
+    const syncRegionPlayer = (start: number, end: number) => {
+      if (regionPlayerRef.current?.isPlaying) {
+        regionPlayerRef.current.updateRegion(start, end);
+      }
+    };
 
-    regions.on("region-created", (region) => {
+    // When a new region starts being created (drag start after threshold), 
+    // clear the old one immediately and subscribe to updates during creation
+    regions.on("region-initialized", (region) => {
+      // Stop any playing region since we're creating a new one
+      if (regionPlayerRef.current?.isPlaying) {
+        regionPlayerRef.current.stop();
+        setIsRegionPlaying(false);
+      }
+      
+      // Remove any existing region
       if (activeRegionRef.current && activeRegionRef.current !== region) {
         activeRegionRef.current.remove();
       }
+      activeRegionRef.current = region;
+      
+      // Show initial selection
+      const selection = { start: region.start, end: region.end };
+      setSelectedRegion(selection);
+      onRegionSelect?.(selection);
+      
+      // Subscribe to the region's own update event for real-time updates during creation
+      // (region-update only fires for saved regions, but region.on('update') works during creation)
+      region.on("update", () => {
+        const sel = { start: region.start, end: region.end };
+        setSelectedRegion(sel);
+        onRegionSelect?.(sel);
+        syncRegionPlayer(region.start, region.end);
+      });
+    });
+
+    // When region creation finishes (drag end), the region is saved
+    regions.on("region-created", (region) => {
       activeRegionRef.current = region;
       const selection = { start: region.start, end: region.end };
       setSelectedRegion(selection);
       onRegionSelect?.(selection);
     });
 
+    // When an existing region is resized/moved (fires after mouse up)
     regions.on("region-updated", (region) => {
       const selection = { start: region.start, end: region.end };
       setSelectedRegion(selection);
       onRegionSelect?.(selection);
+      syncRegionPlayer(region.start, region.end);
+    });
+    
+    // Update during resize/move of existing regions
+    regions.on("region-update", (region) => {
+      const selection = { start: region.start, end: region.end };
+      setSelectedRegion(selection);
+      onRegionSelect?.(selection);
+      syncRegionPlayer(region.start, region.end);
     });
 
     regions.on("region-clicked", (_region, e) => {
@@ -196,35 +247,44 @@ function Waveform({ audioPath, durationSecs, audioInfo, isStreaming, onRegionSel
     const buffer = audioBufferRef.current;
     if (!ws) return;
 
+    // If region player is active (looping mode), stop it
     if (isRegionPlaying && player) {
       player.stop();
       setIsRegionPlaying(false);
       return;
     }
 
+    // If wavesurfer is playing, pause it
     if (ws.isPlaying()) {
       ws.pause();
       return;
     }
 
     const region = activeRegionRef.current;
-    if (region && player && buffer) {
-      player.playRegion(
-        buffer,
-        region.start,
-        region.end,
-        isLooping,
-        () => {
-          setIsRegionPlaying(false);
-          ws.setTime(region.start);
-        },
-        (progress) => {
-          const time = region.start + progress * (region.end - region.start);
-          ws.setTime(time);
-          setCurrentTime(time);
-        }
-      );
-      setIsRegionPlaying(true);
+    if (region) {
+      if (isLooping && player && buffer) {
+        // Use RegionPlayer for looping - it handles seamless loops
+        player.playRegion(
+          buffer,
+          region.start,
+          region.end,
+          true, // always loop when using RegionPlayer
+          () => {
+            setIsRegionPlaying(false);
+            ws.setTime(region.start);
+          },
+          (progress) => {
+            const time = region.start + progress * (region.end - region.start);
+            ws.setTime(time);
+            setCurrentTime(time);
+          }
+        );
+        setIsRegionPlaying(true);
+      } else {
+        // Use WaveSurfer's built-in region play for non-looping
+        // region.play() plays from region.start and stops at region.end
+        region.play(true);
+      }
     } else {
       ws.play();
     }
@@ -259,6 +319,39 @@ function Waveform({ audioPath, durationSecs, audioInfo, isStreaming, onRegionSel
     const ms = Math.floor((seconds % 1) * 100);
     return `${mins}:${secs.toString().padStart(2, "0")}.${ms.toString().padStart(2, "0")}`;
   };
+
+  const handleZoomChange = useCallback((newZoom: number) => {
+    setZoomLevel(newZoom);
+    
+    // Store the pending zoom value
+    pendingZoomRef.current = newZoom;
+    
+    // Throttle zoom updates using requestAnimationFrame
+    if (zoomRafRef.current === null) {
+      zoomRafRef.current = requestAnimationFrame(() => {
+        zoomRafRef.current = null;
+        const zoom = pendingZoomRef.current;
+        if (zoom !== null && wavesurferRef.current && containerRef.current) {
+          // wavesurfer.zoom() takes pixels per second
+          // Calculate base pixels per second at 1x zoom (fit to container)
+          const containerWidth = containerRef.current.clientWidth - 16; // subtract padding
+          const dur = wavesurferRef.current.getDuration() || duration;
+          const basePixelsPerSecond = dur > 0 ? containerWidth / dur : containerWidth;
+          const zoomedPixelsPerSecond = basePixelsPerSecond * zoom;
+          wavesurferRef.current.zoom(zoomedPixelsPerSecond);
+        }
+      });
+    }
+  }, [duration]);
+
+  // Cleanup zoom RAF on unmount
+  useEffect(() => {
+    return () => {
+      if (zoomRafRef.current !== null) {
+        cancelAnimationFrame(zoomRafRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="h-full flex flex-col bg-retro-dark rounded border border-retro-surface-light">
@@ -362,6 +455,7 @@ function Waveform({ audioPath, durationSecs, audioInfo, isStreaming, onRegionSel
         
         <div
           ref={containerRef}
+          className="overflow-x-auto overflow-y-hidden select-none"
           style={{ position: 'absolute', left: '8px', right: '8px', top: '8px', bottom: '8px' }}
         />
 
@@ -370,17 +464,16 @@ function Waveform({ audioPath, durationSecs, audioInfo, isStreaming, onRegionSel
             <p className="text-neon-pink text-sm">{error}</p>
           </div>
         )}
-
-        {!audioPath && !isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <p className="text-cyber-600 text-sm">Drag on the waveform to select a region</p>
-          </div>
-        )}
       </div>
 
       <div className="flex-none h-6 px-3 border-t border-retro-surface-light bg-retro-surface flex items-center justify-between text-cyber-600 text-xs">
-        <span>{audioPath?.split("/").pop() || "No file"}</span>
-        <span>Drag to select region</span>
+        <span className="truncate max-w-[50%]">{audioPath?.split("/").pop() || "No file"}</span>
+        <ZoomSlider
+          value={zoomLevel}
+          onChange={handleZoomChange}
+          maxZoom={maxZoom}
+          disabled={!audioPath || isLoading}
+        />
       </div>
     </div>
   );

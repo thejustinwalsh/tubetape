@@ -38,7 +38,7 @@ export const Loaded: Story = () => (
     <div className="h-64">
       <Waveform 
         audioPath="/mock/path/audio.mp3" 
-        durationSecs={180} 
+        durationSecs={3} 
         audioInfo={mockAudioInfo}
         onRegionSelect={(region) => console.log("Region selected:", region)}
         onClipSample={(region) => console.log("Clip sample:", region)}
