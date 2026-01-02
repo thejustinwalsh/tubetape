@@ -272,10 +272,7 @@ async function setupDeno(): Promise<void> {
     if (IS_PROD && platformInfo.isMacOS && process.env.APPLE_SIGNING_IDENTITY) {
       console.log(`🔏 Code-signing deno binary for macOS...`);
 
-      const removeSignCmd = `codesign --remove-signature "${denoPath}"`;
-      await $`sh -c ${removeSignCmd}`.catch(() => {});
-
-      const codesignCmd = `codesign -s "${process.env.APPLE_SIGNING_IDENTITY}" "${denoPath}"`;
+      const codesignCmd = `codesign -s "${process.env.APPLE_SIGNING_IDENTITY}" --options=runtime --force "${denoPath}"`;
       await $`sh -c ${codesignCmd}`;
 
       console.log(`   ✅ Code-signed deno binary`);
