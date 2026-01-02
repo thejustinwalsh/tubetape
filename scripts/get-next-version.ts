@@ -12,6 +12,7 @@ import { inc as semverInc, valid as semverValid, gt as semverGt } from "semver";
 type AnalyzeCommits = (
   config: { preset?: string },
   context: {
+    cwd: string;
     commits: Array<{ hash: string; message: string }>;
     logger: { log: (...args: unknown[]) => void; error: (...args: unknown[]) => void };
   }
@@ -83,6 +84,7 @@ async function determineBumpType(commits: Commit[]): Promise<"major" | "minor" |
   const releaseType = await analyze(
     { preset: "conventionalcommits" },
     {
+      cwd: process.cwd(),
       commits,
       logger: { log: () => {}, error: () => {} },
     }
