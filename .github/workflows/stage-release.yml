@@ -1,0 +1,210 @@
+name: Stage Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: stage-release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dasel
+        run: |
+          curl -s https://api.github.com/repos/tomwright/dasel/releases/latest \
+            | grep browser_download_url \
+            | grep linux_amd64 \
+            | cut -d '"' -f 4 \
+            | wget -qi - -O /tmp/dasel_linux_amd64 \
+            && sudo mv /tmp/dasel_linux_amd64 /usr/local/bin/dasel \
+            && sudo chmod +x /usr/local/bin/dasel
+          dasel version
+
+      - name: Determine next version
+        id: version
+        run: |
+          OUTPUT=$(bun run scripts/get-next-version.ts 2>&1 | tail -n 1)
+          echo "$OUTPUT"
+          echo "tag=$(echo "$OUTPUT" | jq -r '.tag')" >> $GITHUB_OUTPUT
+          echo "version=$(echo "$OUTPUT" | jq -r '.version')" >> $GITHUB_OUTPUT
+          echo "sha=$(echo "$OUTPUT" | jq -r '.sha')" >> $GITHUB_OUTPUT
+          echo "next_version=$(echo "$OUTPUT" | jq -r '.nextVersion')" >> $GITHUB_OUTPUT
+          echo "needs_release=$(echo "$OUTPUT" | jq -r '.needsRelease')" >> $GITHUB_OUTPUT
+
+      - name: Set release branch name
+        if: steps.version.outputs.needs_release == 'true'
+        id: branch
+        run: |
+          CURRENT_VERSION="${{ steps.version.outputs.version }}"
+          BRANCH="staging/v${CURRENT_VERSION}-next"
+          echo "name=$BRANCH" >> $GITHUB_OUTPUT
+          echo "Release branch: $BRANCH"
+
+      - name: Check for existing release PR
+        if: steps.version.outputs.needs_release == 'true'
+        id: check_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ steps.branch.outputs.name }}"
+          
+          # Check if branch exists on remote
+          if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
+            echo "branch_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "branch_exists=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check for open PR from this branch to release
+          OPEN_PR=$(gh pr list --base release --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          
+          if [ -n "$OPEN_PR" ]; then
+            echo "pr_exists=true" >> $GITHUB_OUTPUT
+            echo "pr_number=$OPEN_PR" >> $GITHUB_OUTPUT
+            echo "Found open PR #$OPEN_PR"
+          else
+            echo "pr_exists=false" >> $GITHUB_OUTPUT
+            echo "No open PR found"
+          fi
+
+      - name: Update version in tauri.conf.json
+        if: steps.version.outputs.needs_release == 'true'
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.next_version }}"
+          dasel -i json --root "version = \"$NEW_VERSION\"" < src-tauri/tauri.conf.json > src-tauri/tauri.conf.json.tmp \
+            && mv src-tauri/tauri.conf.json.tmp src-tauri/tauri.conf.json
+
+      - name: Update version in Cargo.toml
+        if: steps.version.outputs.needs_release == 'true'
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.next_version }}"
+          dasel -i toml --root "package.version = \"$NEW_VERSION\"" < src-tauri/Cargo.toml > src-tauri/Cargo.toml.tmp \
+            && mv src-tauri/Cargo.toml.tmp src-tauri/Cargo.toml
+
+      - name: Generate changelog
+        if: steps.version.outputs.needs_release == 'true'
+        uses: orhun/git-cliff-action@v4
+        id: changelog
+        with:
+          config: cliff.toml
+          args: ${{ steps.version.outputs.tag && format('{0}..HEAD', steps.version.outputs.tag) || '' }} --tag v${{ steps.version.outputs.next_version }}
+        env:
+          OUTPUT: CHANGELOG.md
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Create or update release branch from main
+        if: steps.version.outputs.needs_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ steps.branch.outputs.name }}"
+          # Force create/update the branch to point to current main HEAD
+          # This ensures all changes from main are included
+          git push origin HEAD:refs/heads/$BRANCH --force
+
+      - name: Commit and push release changes
+        if: steps.version.outputs.needs_release == 'true'
+        uses: iarekylew00t/verified-bot-commit@v2
+        with:
+          ref: ${{ steps.branch.outputs.name }}
+          message: "chore(release): prepare v${{ steps.version.outputs.next_version }}"
+          files: |
+            src-tauri/tauri.conf.json
+            src-tauri/Cargo.toml
+            CHANGELOG.md
+
+      - name: Create PR if none exists
+        if: steps.version.outputs.needs_release == 'true' && steps.check_pr.outputs.pr_exists != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.next_version }}"
+          BRANCH="${{ steps.branch.outputs.name }}"
+          
+          # Extract changelog (truncate to ~3000 chars for PR body limit)
+          CHANGELOG=$(head -c 3000 CHANGELOG.md)
+          if [ ${#CHANGELOG} -eq 3000 ]; then
+            CHANGELOG="${CHANGELOG}...
+
+          _Changelog truncated. See [CHANGELOG.md](CHANGELOG.md) for full details._"
+          fi
+          
+          # Write PR body to temp file to handle multiline properly
+          cat > /tmp/pr-body.md << EOF
+          ## Release v${NEW_VERSION}
+
+          This PR is automatically kept in sync with \`main\`.
+
+          ### Changes
+          ${CHANGELOG}
+
+          ---
+          **Merge this PR to trigger the release build.**
+          EOF
+          
+          gh pr create \
+            --base release \
+            --head "$BRANCH" \
+            --title "Release v$NEW_VERSION" \
+            --body-file /tmp/pr-body.md \
+            --draft
+
+      - name: Update PR if exists
+        if: steps.version.outputs.needs_release == 'true' && steps.check_pr.outputs.pr_exists == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.next_version }}"
+          PR_NUMBER="${{ steps.check_pr.outputs.pr_number }}"
+          
+          # Extract changelog (truncate to ~3000 chars for PR body limit)
+          CHANGELOG=$(head -c 3000 CHANGELOG.md)
+          if [ ${#CHANGELOG} -eq 3000 ]; then
+            CHANGELOG="${CHANGELOG}...
+
+          _Changelog truncated. See [CHANGELOG.md](CHANGELOG.md) for full details._"
+          fi
+          
+          # Write PR body to temp file to handle multiline properly
+          cat > /tmp/pr-body.md << EOF
+          ## Release v${NEW_VERSION}
+
+          This PR is automatically kept in sync with \`main\`.
+
+          ### Changes
+          ${CHANGELOG}
+
+          ---
+          **Merge this PR to trigger the release build.**
+          EOF
+          
+          gh pr edit "$PR_NUMBER" \
+            --title "Release v$NEW_VERSION" \
+            --body-file /tmp/pr-body.md
+          
+          echo "Updated PR #$PR_NUMBER with latest changes"

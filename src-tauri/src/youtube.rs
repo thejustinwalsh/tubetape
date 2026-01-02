@@ -1,6 +1,6 @@
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -57,6 +57,7 @@ pub async fn fetch_oembed_metadata(url: &str) -> Result<VideoMetadata, String> {
 pub async fn download_audio<F>(
     url: &str,
     output_path: &Path,
+    deno_path: Option<PathBuf>,
     mut on_progress: F,
 ) -> Result<(), String>
 where
@@ -75,8 +76,8 @@ where
     let template = output_dir.join(format!("{}.%(ext)s", stem));
     let template_str = template.to_string_lossy().to_string();
 
-    let mut child = Command::new(&yt_dlp)
-        .arg("-x")
+    let mut cmd = Command::new(&yt_dlp);
+    cmd.arg("-x")
         .arg("--audio-format")
         .arg("mp3")
         .arg("--audio-quality")
@@ -87,7 +88,18 @@ where
         .arg("--no-playlist")
         .arg("--progress")
         .arg("--socket-timeout")
-        .arg("30")
+        .arg("30");
+
+    // Add deno executable if provided
+    if let Some(deno) = deno_path {
+        let deno_str = deno.to_string_lossy().to_string();
+        eprintln!("[tubetape] Using deno runtime: {}", deno_str);
+        // yt-dlp expects a JS runtime, using bundled deno, see yt-dlp's --js-runtimes option.
+        cmd.arg("--js-runtimes")
+            .arg(format!("deno:{}", deno_str));
+    }
+
+    let mut child = cmd
         .arg(url)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

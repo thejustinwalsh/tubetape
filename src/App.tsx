@@ -8,7 +8,7 @@ import CassetteTape from "./components/CassetteTape";
 import VideoUnfurl from "./components/VideoUnfurl";
 import Waveform from "./components/Waveform";
 import SampleWaveform from "./components/SampleWaveform";
-import { getDatabase, generateSampleId, type SampleDocType, type TubetapeDatabase } from "./db";
+import { getDatabase, generateSampleId, type SampleDocType, type TubetapeDatabase } from "./lib/db";
 import type { VideoMetadata, ExtractionEvent, AppState, Project, CachedAudioInfo, AudioInfo } from "./types";
 import { useAppStats } from "./hooks/useAppStats";
 
@@ -106,12 +106,12 @@ function App() {
             peaksProcessed = 0;
             setProgress({ percent: 0, status: "Generating waveform..." });
             break;
-          case "waveformChunk":
+          case "waveformChunk": {
             // Track peaks as they come in
             peaksProcessed += event.data.peaks.length;
             const percent = totalPeaks > 0 ? Math.min(98, (peaksProcessed / totalPeaks) * 100) : 0;
             setProgress({ percent, status: "Generating waveform..." });
-            break;
+          } break;
           case "completed":
             setAudioPath(event.data.audio_path);
             setDuration(event.data.duration_secs);
@@ -136,7 +136,7 @@ function App() {
       setError(errorMessage);
       setAppState("error");
     }
-  }, []);
+  }, [refetchStats]);
 
   const handleReset = useCallback(() => {
     setAppState("idle");

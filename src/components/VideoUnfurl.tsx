@@ -35,7 +35,7 @@ function VideoUnfurl({ metadata, progress }: VideoUnfurlProps) {
               className="flex items-center gap-1 mt-0.5 text-cyber-600 hover:text-neon-cyan transition-colors cursor-pointer w-fit"
               onClick={() => openUrl(`https://youtube.com/watch?v=${metadata.videoId}`)}
             >
-              <span className="text-[10px] font-mono truncate max-w-[200px]">
+              <span className="text-[10px] font-mono truncate max-w-50">
                 https://youtube.com/watch?v={metadata.videoId}
               </span>
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">

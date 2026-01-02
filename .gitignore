@@ -8,9 +8,15 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+build
 dist
 dist-ssr
 *.local
+
+# Ladle output
+.ladle/build
+.ladle/test-results
+.ladle/playwright-report
 
 # Editor directories and files
 .vscode/*

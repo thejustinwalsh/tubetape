@@ -7,11 +7,17 @@ export class RegionPlayer {
   private onProgress: ((progress: number) => void) | null = null;
   private animationFrameId: number | null = null;
   private playbackStartTime = 0;
-  private regionDuration = 0;
+  private regionStart = 0;
+  private regionEnd = 0;
   private isLooping = false;
+  private currentBuffer: AudioBuffer | null = null;
 
   get isPlaying(): boolean {
     return this._isPlaying;
+  }
+  
+  get regionDuration(): number {
+    return this.regionEnd - this.regionStart;
   }
 
   async init(sampleRate: number, sharedContext?: AudioContext): Promise<AudioContext> {
@@ -31,6 +37,21 @@ export class RegionPlayer {
     if (!this.audioContext) return;
     this.gainNode = this.audioContext.createGain();
     this.gainNode.connect(this.audioContext.destination);
+  }
+  
+  /** Get current playback position within the region (0 to regionDuration) */
+  private getCurrentRegionTime(): number {
+    if (!this.audioContext || !this._isPlaying) return 0;
+    const elapsed = this.audioContext.currentTime - this.playbackStartTime;
+    if (this.isLooping) {
+      return elapsed % this.regionDuration;
+    }
+    return Math.min(elapsed, this.regionDuration);
+  }
+  
+  /** Get current absolute time in the audio buffer */
+  getCurrentTime(): number {
+    return this.regionStart + this.getCurrentRegionTime();
   }
 
   private startProgressLoop(): void {
@@ -80,18 +101,27 @@ export class RegionPlayer {
       return;
     }
 
+    // Snap to sample boundaries (expand) for sample-accurate looping
+    const sampleRate = buffer.sampleRate;
+    const startSample = Math.floor(startTime * sampleRate);
+    const endSample = Math.ceil(endTime * sampleRate);
+    const snappedStart = startSample / sampleRate;
+    const snappedEnd = endSample / sampleRate;
+
     this.onEnded = onEnded ?? null;
     this.onProgress = onProgress ?? null;
-    this.regionDuration = endTime - startTime;
+    this.regionStart = snappedStart;
+    this.regionEnd = snappedEnd;
     this.isLooping = loop;
+    this.currentBuffer = buffer;
 
     this.sourceNode = this.audioContext.createBufferSource();
     this.sourceNode.buffer = buffer;
     this.sourceNode.connect(this.gainNode);
 
     this.sourceNode.loop = loop;
-    this.sourceNode.loopStart = startTime;
-    this.sourceNode.loopEnd = endTime;
+    this.sourceNode.loopStart = snappedStart;
+    this.sourceNode.loopEnd = snappedEnd;
 
     this.sourceNode.onended = () => {
       this._isPlaying = false;
@@ -99,11 +129,105 @@ export class RegionPlayer {
       this.onEnded?.();
     };
 
-    const duration = loop ? undefined : endTime - startTime;
+    const duration = loop ? undefined : snappedEnd - snappedStart;
     this.playbackStartTime = this.audioContext.currentTime;
-    this.sourceNode.start(0, startTime, duration);
+    this.sourceNode.start(0, snappedStart, duration);
     this._isPlaying = true;
     this.startProgressLoop();
+  }
+  
+  /**
+   * Update the region bounds while playing in loop mode. Zero-copy operation 
+   * that adjusts loopStart/loopEnd on the existing AudioBufferSourceNode.
+   * 
+   * If the current playhead is outside the new region bounds, restarts from
+   * the beginning of the new region.
+   * 
+   * Note: This method is designed for looping playback only. For non-looping
+   * playback, use WaveSurfer's built-in region.play() instead.
+   */
+  updateRegion(newStartTime: number, newEndTime: number): void {
+    if (!this._isPlaying || !this.sourceNode || !this.audioContext || !this.currentBuffer) {
+      return;
+    }
+    
+    // Snap to sample boundaries
+    const sampleRate = this.currentBuffer.sampleRate;
+    const startSample = Math.floor(newStartTime * sampleRate);
+    const endSample = Math.ceil(newEndTime * sampleRate);
+    const snappedStart = startSample / sampleRate;
+    const snappedEnd = endSample / sampleRate;
+    
+    // Get current absolute playback position before updating
+    const currentAbsTime = this.getCurrentTime();
+    
+    // Check if playhead is outside new bounds
+    const outsideBounds = currentAbsTime < snappedStart || currentAbsTime >= snappedEnd;
+    
+    if (outsideBounds) {
+      // Restart from the beginning of the new region
+      this.restartAtPosition(snappedStart, snappedEnd, snappedStart);
+    } else {
+      // Inside bounds - just update loop points (zero-copy path!)
+      this.sourceNode.loopStart = snappedStart;
+      this.sourceNode.loopEnd = snappedEnd;
+      
+      // Update stored region bounds and adjust timing for progress reporting
+      const oldStart = this.regionStart;
+      this.regionStart = snappedStart;
+      this.regionEnd = snappedEnd;
+      
+      // Adjust playback start time so progress calculation stays correct
+      if (oldStart !== snappedStart) {
+        const elapsed = this.audioContext.currentTime - this.playbackStartTime;
+        const oldRegionTime = elapsed % (this.regionEnd - oldStart);
+        const absolutePos = oldStart + oldRegionTime;
+        const newRegionTime = absolutePos - snappedStart;
+        this.playbackStartTime = this.audioContext.currentTime - newRegionTime;
+      }
+    }
+  }
+  
+  /**
+   * Restart playback at a specific position within the region.
+   * Used when the region bounds change and playhead is outside new bounds.
+   */
+  private restartAtPosition(newStart: number, newEnd: number, startPosition: number): void {
+    if (!this.audioContext || !this.gainNode || !this.currentBuffer) return;
+    
+    // Stop current source
+    if (this.sourceNode) {
+      this.sourceNode.onended = null;
+      try {
+        this.sourceNode.stop();
+      } catch {
+        // Already stopped
+      }
+      this.sourceNode.disconnect();
+    }
+    
+    // Update region bounds
+    this.regionStart = newStart;
+    this.regionEnd = newEnd;
+    
+    // Create new source node
+    this.sourceNode = this.audioContext.createBufferSource();
+    this.sourceNode.buffer = this.currentBuffer;
+    this.sourceNode.connect(this.gainNode);
+    
+    this.sourceNode.loop = this.isLooping;
+    this.sourceNode.loopStart = newStart;
+    this.sourceNode.loopEnd = newEnd;
+    
+    this.sourceNode.onended = () => {
+      this._isPlaying = false;
+      this.stopProgressLoop();
+      this.onEnded?.();
+    };
+    
+    const duration = this.isLooping ? undefined : newEnd - startPosition;
+    this.playbackStartTime = this.audioContext.currentTime - (startPosition - newStart);
+    this.sourceNode.start(0, startPosition, duration);
   }
 
   stop(): void {
@@ -112,12 +236,12 @@ export class RegionPlayer {
       this.sourceNode.onended = null;
       try {
         this.sourceNode.stop();
-      } catch {
-      }
+      } catch { /* noop */ }
       this.sourceNode.disconnect();
       this.sourceNode = null;
     }
     this._isPlaying = false;
+    this.currentBuffer = null;
   }
 
   setVolume(volume: number): void {
