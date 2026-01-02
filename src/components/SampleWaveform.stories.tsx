@@ -22,7 +22,6 @@ const mockBuffer = createAudioBuffer({
 export const Default: Story = () => (
   <div className="p-8 min-h-screen">
     <div className="max-w-xl mx-auto space-y-8">
-      <h3 className="text-neon-cyan font-mono mb-4 uppercase tracking-widest">Sample Waveform</h3>
       <SampleWaveform
         name="Lo-Fi Snare"
         audioBuffer={mockBuffer}

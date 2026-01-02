@@ -1,8 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './.ladle/test',
-  outputDir: './.ladle/test-results',
+  testDir: '.ladle/test',
+  outputDir: '.ladle/test-results',
+  snapshotPathTemplate: '.ladle/test/snapshots/{testFilePath}/{arg}{ext}',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
