@@ -40,9 +40,9 @@ jobs:
             | grep browser_download_url \
             | grep linux_amd64 \
             | cut -d '"' -f 4 \
-            | wget -qi - \
-            && mv dasel_linux_amd64 /usr/local/bin/dasel \
-            && chmod +x /usr/local/bin/dasel
+            | wget -qi - -O /tmp/dasel_linux_amd64 \
+            && sudo mv /tmp/dasel_linux_amd64 /usr/local/bin/dasel \
+            && sudo chmod +x /usr/local/bin/dasel
           dasel version
 
       - name: Get current released version
@@ -66,11 +66,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Install semantic-release and plugins
-          bun add -d semantic-release @semantic-release/commit-analyzer conventional-changelog-conventionalcommits
+          # Install semantic-release to temp dir to avoid modifying package.json
+          TEMP_DIR=$(mktemp -d)
+          cd "$TEMP_DIR"
+          bun init -y
+          bun add semantic-release @semantic-release/commit-analyzer conventional-changelog-conventionalcommits
           
-          # Run semantic-release in dry-run mode to get next version
-          OUTPUT=$(bunx semantic-release --dry-run --no-ci 2>&1) || true
+          # Run semantic-release in dry-run mode from the repo directory
+          cd "$GITHUB_WORKSPACE"
+          OUTPUT=$("$TEMP_DIR/node_modules/.bin/semantic-release" --dry-run --no-ci 2>&1) || true
           echo "$OUTPUT"
           
           # Extract the next version from output (case-insensitive match)
@@ -147,41 +151,26 @@ jobs:
           OUTPUT: CHANGELOG.md
           GITHUB_REPO: ${{ github.repository }}
 
-      - name: Update existing release branch
-        if: steps.version.outputs.needs_release == 'true' && steps.check_pr.outputs.branch_exists == 'true'
+      - name: Create or update release branch from main
+        if: steps.version.outputs.needs_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          NEW_VERSION="${{ steps.version.outputs.version }}"
           BRANCH="${{ steps.branch.outputs.name }}"
-          
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          git checkout -B "$BRANCH"
-          git add -A
-          git commit -m "chore(release): prepare v$NEW_VERSION"
-          
-          # Force push to update the existing branch (force-with-lease prevents race conditions)
-          git push origin "$BRANCH" --force-with-lease
-          
-          echo "Updated existing branch $BRANCH"
+          # Force create/update the branch to point to current main HEAD
+          # This ensures all changes from main are included
+          git push origin HEAD:refs/heads/$BRANCH --force
 
-      - name: Create new release branch
-        if: steps.version.outputs.needs_release == 'true' && steps.check_pr.outputs.branch_exists != 'true'
-        run: |
-          NEW_VERSION="${{ steps.version.outputs.version }}"
-          BRANCH="${{ steps.branch.outputs.name }}"
-          
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          git checkout -B "$BRANCH"
-          git add -A
-          git commit -m "chore(release): prepare v$NEW_VERSION"
-          
-          # Use force-with-lease to handle race conditions if another run created the branch
-          git push origin "$BRANCH" --force-with-lease
-          
-          echo "Created new branch $BRANCH"
+      - name: Commit and push release changes
+        if: steps.version.outputs.needs_release == 'true'
+        uses: iarekylew00t/verified-bot-commit@v2
+        with:
+          ref: ${{ steps.branch.outputs.name }}
+          message: "chore(release): prepare v${{ steps.version.outputs.version }}"
+          files: |
+            src-tauri/tauri.conf.json
+            src-tauri/Cargo.toml
+            CHANGELOG.md
 
       - name: Create PR if none exists
         if: steps.version.outputs.needs_release == 'true' && steps.check_pr.outputs.pr_exists != 'true'
