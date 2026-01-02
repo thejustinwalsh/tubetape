@@ -21,6 +21,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
           ref: main
 
       - name: Setup Node.js
@@ -39,9 +40,14 @@ jobs:
       - name: Get current released version
         id: current
         run: |
-          # Get the latest release tag, fallback to v0.0.0 if none exists
+          # Get the latest release tag, handling both app-v* and v* formats
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          CURRENT_VERSION="${LATEST_TAG#v}"
+          echo "Found tag: $LATEST_TAG"
+          
+          # Strip both app-v and v prefixes to get clean version
+          CURRENT_VERSION="${LATEST_TAG#app-v}"  # Try app-v first
+          CURRENT_VERSION="${CURRENT_VERSION#v}"  # Then try v
+          
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
           echo "Current released version: $CURRENT_VERSION"
 
@@ -57,8 +63,8 @@ jobs:
           OUTPUT=$(bunx semantic-release --dry-run --no-ci 2>&1) || true
           echo "$OUTPUT"
           
-          # Extract the next version from output
-          NEXT_VERSION=$(echo "$OUTPUT" | grep -oP 'The next release version is \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+          # Extract the next version from output (case-insensitive match)
+          NEXT_VERSION=$(echo "$OUTPUT" | grep -ioP 'the next release version is \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
           
           if [ -z "$NEXT_VERSION" ]; then
             echo "No release needed or could not determine version"
