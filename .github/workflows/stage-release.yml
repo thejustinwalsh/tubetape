@@ -45,57 +45,23 @@ jobs:
             && sudo chmod +x /usr/local/bin/dasel
           dasel version
 
-      - name: Get current released version
-        id: current
-        run: |
-          # Get the latest release tag, handling both app-v* and v* formats
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          echo "Found tag: $LATEST_TAG"
-          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
-          
-          # Strip both app-v and v prefixes to get clean version
-          CURRENT_VERSION="${LATEST_TAG#app-v}"  # Try app-v first
-          CURRENT_VERSION="${CURRENT_VERSION#v}"  # Then try v
-          CURRENT_VERSION="${CURRENT_VERSION:-0.0.0}"  # Default if no tag
-          
-          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          echo "Current released version: $CURRENT_VERSION"
-
-      - name: Determine next version with semantic-release
+      - name: Determine next version
         id: version
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Install semantic-release to temp dir to avoid modifying package.json
-          TEMP_DIR=$(mktemp -d)
-          cd "$TEMP_DIR"
-          bun init -y
-          bun add semantic-release @semantic-release/commit-analyzer conventional-changelog-conventionalcommits
-          
-          # Run semantic-release in dry-run mode from the repo directory
-          cd "$GITHUB_WORKSPACE"
-          OUTPUT=$("$TEMP_DIR/node_modules/.bin/semantic-release" --dry-run --no-ci 2>&1) || true
+          OUTPUT=$(bun run scripts/get-next-version.ts)
           echo "$OUTPUT"
-          
-          # Extract the next version from output (case-insensitive match)
-          NEXT_VERSION=$(echo "$OUTPUT" | grep -ioP 'the next release version is \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
-          
-          if [ -z "$NEXT_VERSION" ]; then
-            echo "No release needed or could not determine version"
-            echo "needs_release=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          echo "Next version: $NEXT_VERSION"
-          echo "version=$NEXT_VERSION" >> $GITHUB_OUTPUT
-          echo "needs_release=true" >> $GITHUB_OUTPUT
+          echo "tag=$(echo "$OUTPUT" | dasel -i json '.tag')" >> $GITHUB_OUTPUT
+          echo "version=$(echo "$OUTPUT" | dasel -i json '.version')" >> $GITHUB_OUTPUT
+          echo "sha=$(echo "$OUTPUT" | dasel -i json '.sha')" >> $GITHUB_OUTPUT
+          echo "next_version=$(echo "$OUTPUT" | dasel -i json '.nextVersion')" >> $GITHUB_OUTPUT
+          echo "needs_release=$(echo "$OUTPUT" | dasel -i json '.needsRelease')" >> $GITHUB_OUTPUT
 
       - name: Set release branch name
         if: steps.version.outputs.needs_release == 'true'
         id: branch
         run: |
-          CURRENT_VERSION="${{ steps.current.outputs.version }}"
-          BRANCH="staging/v${CURRENT_VERSION}-next"
+          NEXT_VERSION="${{ steps.version.outputs.next_version }}"
+          BRANCH="staging/v${NEXT_VERSION}"
           echo "name=$BRANCH" >> $GITHUB_OUTPUT
           echo "Release branch: $BRANCH"
 
@@ -129,14 +95,14 @@ jobs:
       - name: Update version in tauri.conf.json
         if: steps.version.outputs.needs_release == 'true'
         run: |
-          NEW_VERSION="${{ steps.version.outputs.version }}"
+          NEW_VERSION="${{ steps.version.outputs.next_version }}"
           dasel -i json --root "version = \"$NEW_VERSION\"" < src-tauri/tauri.conf.json > src-tauri/tauri.conf.json.tmp \
             && mv src-tauri/tauri.conf.json.tmp src-tauri/tauri.conf.json
 
       - name: Update version in Cargo.toml
         if: steps.version.outputs.needs_release == 'true'
         run: |
-          NEW_VERSION="${{ steps.version.outputs.version }}"
+          NEW_VERSION="${{ steps.version.outputs.next_version }}"
           dasel -i toml --root "package.version = \"$NEW_VERSION\"" < src-tauri/Cargo.toml > src-tauri/Cargo.toml.tmp \
             && mv src-tauri/Cargo.toml.tmp src-tauri/Cargo.toml
 
@@ -146,7 +112,7 @@ jobs:
         id: changelog
         with:
           config: cliff.toml
-          args: ${{ steps.current.outputs.tag && format('{0}..HEAD', steps.current.outputs.tag) || '' }} --tag v${{ steps.version.outputs.version }}
+          args: ${{ steps.version.outputs.tag && format('{0}..HEAD', steps.version.outputs.tag) || '' }} --tag v${{ steps.version.outputs.next_version }}
         env:
           OUTPUT: CHANGELOG.md
           GITHUB_REPO: ${{ github.repository }}
@@ -166,7 +132,7 @@ jobs:
         uses: iarekylew00t/verified-bot-commit@v2
         with:
           ref: ${{ steps.branch.outputs.name }}
-          message: "chore(release): prepare v${{ steps.version.outputs.version }}"
+          message: "chore(release): prepare v${{ steps.version.outputs.next_version }}"
           files: |
             src-tauri/tauri.conf.json
             src-tauri/Cargo.toml
@@ -177,7 +143,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          NEW_VERSION="${{ steps.version.outputs.version }}"
+          NEW_VERSION="${{ steps.version.outputs.next_version }}"
           BRANCH="${{ steps.branch.outputs.name }}"
           
           # Extract changelog (truncate to ~3000 chars for PR body limit)
@@ -213,7 +179,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          NEW_VERSION="${{ steps.version.outputs.version }}"
+          NEW_VERSION="${{ steps.version.outputs.next_version }}"
           PR_NUMBER="${{ steps.check_pr.outputs.pr_number }}"
           
           # Extract changelog (truncate to ~3000 chars for PR body limit)
