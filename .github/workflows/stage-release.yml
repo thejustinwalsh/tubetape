@@ -49,12 +49,14 @@ jobs:
         id: current
         run: |
           # Get the latest release tag, handling both app-v* and v* formats
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           echo "Found tag: $LATEST_TAG"
+          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
           
           # Strip both app-v and v prefixes to get clean version
           CURRENT_VERSION="${LATEST_TAG#app-v}"  # Try app-v first
           CURRENT_VERSION="${CURRENT_VERSION#v}"  # Then try v
+          CURRENT_VERSION="${CURRENT_VERSION:-0.0.0}"  # Default if no tag
           
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
           echo "Current released version: $CURRENT_VERSION"
@@ -140,7 +142,7 @@ jobs:
         id: changelog
         with:
           config: cliff.toml
-          args: --tag v${{ steps.version.outputs.version }}
+          args: ${{ steps.current.outputs.tag && format('{0}..HEAD', steps.current.outputs.tag) || '' }} --tag v${{ steps.version.outputs.version }}
         env:
           OUTPUT: CHANGELOG.md
           GITHUB_REPO: ${{ github.repository }}
@@ -214,7 +216,8 @@ jobs:
             --base release \
             --head "$BRANCH" \
             --title "Release v$NEW_VERSION" \
-            --body-file /tmp/pr-body.md
+            --body-file /tmp/pr-body.md \
+            --draft
 
       - name: Update PR if exists
         if: steps.version.outputs.needs_release == 'true' && steps.check_pr.outputs.pr_exists == 'true'
