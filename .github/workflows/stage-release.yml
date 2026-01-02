@@ -124,14 +124,15 @@ jobs:
         if: steps.version.outputs.needs_release == 'true'
         run: |
           NEW_VERSION="${{ steps.version.outputs.version }}"
-          jq --arg v "$NEW_VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json
-          mv tmp.json src-tauri/tauri.conf.json
+          dasel -i json --root "version = \"$NEW_VERSION\"" < src-tauri/tauri.conf.json > src-tauri/tauri.conf.json.tmp \
+            && mv src-tauri/tauri.conf.json.tmp src-tauri/tauri.conf.json
 
       - name: Update version in Cargo.toml
         if: steps.version.outputs.needs_release == 'true'
         run: |
           NEW_VERSION="${{ steps.version.outputs.version }}"
-          dasel -f src-tauri/Cargo.toml -w toml "package.version = \"$NEW_VERSION\""
+          dasel -i toml --root "package.version = \"$NEW_VERSION\"" < src-tauri/Cargo.toml > src-tauri/Cargo.toml.tmp \
+            && mv src-tauri/Cargo.toml.tmp src-tauri/Cargo.toml
 
       - name: Generate changelog
         if: steps.version.outputs.needs_release == 'true'
