@@ -91,6 +91,7 @@ const samplesSchemaLiteral = {
   indexes: ["sourceVideoId", "createdAt"],
 } as const;
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const schemaTyped = toTypedRxJsonSchema(samplesSchemaLiteral);
 export type SampleDocType = ExtractDocumentTypeFromTypedRxJsonSchema<typeof schemaTyped>;
 export type SampleDocument = RxDocument<SampleDocType>;

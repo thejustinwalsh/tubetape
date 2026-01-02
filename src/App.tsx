@@ -106,12 +106,12 @@ function App() {
             peaksProcessed = 0;
             setProgress({ percent: 0, status: "Generating waveform..." });
             break;
-          case "waveformChunk":
+          case "waveformChunk": {
             // Track peaks as they come in
             peaksProcessed += event.data.peaks.length;
             const percent = totalPeaks > 0 ? Math.min(98, (peaksProcessed / totalPeaks) * 100) : 0;
             setProgress({ percent, status: "Generating waveform..." });
-            break;
+          } break;
           case "completed":
             setAudioPath(event.data.audio_path);
             setDuration(event.data.duration_secs);
@@ -136,7 +136,7 @@ function App() {
       setError(errorMessage);
       setAppState("error");
     }
-  }, []);
+  }, [refetchStats]);
 
   const handleReset = useCallback(() => {
     setAppState("idle");

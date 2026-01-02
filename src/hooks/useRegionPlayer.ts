@@ -14,7 +14,7 @@ export function useRegionPlayer({ sampleRate }: { sampleRate: number }) {
       playerRef.current?.destroy();
       playerRef.current = null;
     };
-  }, []);
+  }, [sampleRate]);
 
   const playRegion = useCallback(
     (buffer: AudioBuffer, startTime: number, endTime: number, loop: boolean) => {

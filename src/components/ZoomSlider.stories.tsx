@@ -192,7 +192,7 @@ export const Interactive: Story = () => {
 
         <div className="text-cyber-400 text-xs space-y-1">
           <p>• Drag freely for smooth zooming - updates in real-time</p>
-          <p>• "Magnetic" snap when near power-of-2 stops (1x, 2x, 4x...)</p>
+          <p>• &quot;Magnetic&quot; snap when near power-of-2 stops (1x, 2x, 4x...)</p>
           <p>• Click anywhere on track to jump to that zoom level</p>
           <p>• Keyboard: arrows step through stops, Home/End for min/max</p>
         </div>
