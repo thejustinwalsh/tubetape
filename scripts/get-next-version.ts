@@ -6,11 +6,13 @@
 
 // @ts-expect-error - untyped module
 import { analyzeCommits } from "@semantic-release/commit-analyzer";
+// @ts-expect-error - untyped module
+import conventionalChangelogPreset from "conventional-changelog-conventionalcommits";
 import { $ } from "bun";
 import { inc as semverInc, valid as semverValid, gt as semverGt } from "semver";
 
 type AnalyzeCommits = (
-  config: { preset?: string },
+  config: { parserOpts?: unknown; releaseRules?: unknown },
   context: {
     cwd: string;
     commits: Array<{ hash: string; message: string }>;
@@ -81,8 +83,11 @@ async function getCommitsSince(sha: string): Promise<Commit[]> {
 async function determineBumpType(commits: Commit[]): Promise<"major" | "minor" | "patch" | null> {
   if (commits.length === 0) return null;
 
+  // Load preset directly to avoid dynamic import issues with Bun's global cache
+  const presetConfig = await conventionalChangelogPreset();
+
   const releaseType = await analyze(
-    { preset: "conventionalcommits" },
+    { parserOpts: presetConfig.parserOpts, releaseRules: presetConfig.releaseRules },
     {
       cwd: process.cwd(),
       commits,
