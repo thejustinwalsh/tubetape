@@ -1,42 +1,42 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tubetape",
-  "version": "0.1.1",
-  "identifier": "dev.tjw.tubetape",
-  "build": {
-    "beforeDevCommand": "bun scripts/setup-deno.ts && bun run dev",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "NODE_ENV=production bun scripts/setup-deno.ts && bun run build",
-    "frontendDist": "../dist"
-  },
-  "app": {
-    "windows": [
-      {
-        "title": "tubetape",
-        "width": 1000,
-        "height": 750,
-        "minWidth": 800,
-        "minHeight": 600,
-        "center": true,
-        "backgroundColor": "#050508"
-      }
-    ],
-    "security": {
-      "csp": null
+    "$schema": "https://schema.tauri.app/config/2",
+    "productName": "tubetape",
+    "version": "0.2.0",
+    "identifier": "dev.tjw.tubetape",
+    "build": {
+        "beforeDevCommand": "bun scripts/setup-deno.ts \u0026\u0026 bun run dev",
+        "devUrl": "http://localhost:1420",
+        "beforeBuildCommand": "NODE_ENV=production bun scripts/setup-deno.ts \u0026\u0026 bun run build",
+        "frontendDist": "../dist"
+    },
+    "app": {
+        "windows": [
+            {
+                "title": "tubetape",
+                "width": 1000,
+                "height": 750,
+                "minWidth": 800,
+                "minHeight": 600,
+                "center": true,
+                "backgroundColor": "#050508"
+            }
+        ],
+        "security": {
+            "csp": null
+        }
+    },
+    "bundle": {
+        "active": true,
+        "targets": "all",
+        "icon": [
+            "icons/32x32.png",
+            "icons/128x128.png",
+            "icons/128x128@2x.png",
+            "icons/icon.icns",
+            "icons/icon.ico"
+        ],
+        "resources": [
+            "binaries/deno/*"
+        ]
     }
-  },
-  "bundle": {
-    "active": true,
-    "targets": "all",
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ],
-    "resources": [
-      "binaries/deno/*"
-    ]
-  }
 }
