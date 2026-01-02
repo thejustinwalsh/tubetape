@@ -48,7 +48,7 @@ jobs:
       - name: Determine next version
         id: version
         run: |
-          OUTPUT=$(bun run scripts/get-next-version.ts)
+          OUTPUT=$(bun run scripts/get-next-version.ts 2>&1 | tail -n 1)
           echo "$OUTPUT"
           echo "tag=$(echo "$OUTPUT" | dasel -i json '.tag')" >> $GITHUB_OUTPUT
           echo "version=$(echo "$OUTPUT" | dasel -i json '.version')" >> $GITHUB_OUTPUT
