@@ -236,8 +236,7 @@ export class RegionPlayer {
       this.sourceNode.onended = null;
       try {
         this.sourceNode.stop();
-      } catch {
-      }
+      } catch { /* noop */ }
       this.sourceNode.disconnect();
       this.sourceNode = null;
     }

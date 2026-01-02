@@ -146,7 +146,7 @@ async function setupDeno(): Promise<void> {
       console.log(`✅ Deno binary already exists: ${versionLine}`);
       console.log(`   Path: ${denoPath}`);
       return;
-    } catch (e) {
+    } catch {
       console.log(`⚠️  Existing binary is broken, re-downloading...`);
       await unlink(denoPath);
     }

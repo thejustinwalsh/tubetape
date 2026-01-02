@@ -235,12 +235,6 @@ function Waveform({ audioPath, durationSecs, audioInfo, isStreaming, onRegionSel
     loadAudio();
   }, [audioPath]);
 
-  useEffect(() => {
-    if (durationSecs && durationSecs > 0) {
-      setDuration(durationSecs);
-    }
-  }, [durationSecs]);
-
   const togglePlayPause = useCallback(() => {
     const ws = wavesurferRef.current;
     const player = regionPlayerRef.current;
