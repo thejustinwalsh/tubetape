@@ -131,7 +131,7 @@ jobs:
         if: steps.version.outputs.needs_release == 'true'
         run: |
           NEW_VERSION="${{ steps.version.outputs.version }}"
-          dasel put string -f src-tauri/Cargo.toml '.package.version' "$NEW_VERSION"
+          dasel -f src-tauri/Cargo.toml -w toml "package.version = \"$NEW_VERSION\""
 
       - name: Generate changelog
         if: steps.version.outputs.needs_release == 'true'
