@@ -109,9 +109,9 @@ Enable fully self-contained binary distribution without relying on user's local 
 
 **Tasks:**
 - [ ] Integrate yt-dlp binary fetching from GitHub releases
-- [ ] Implement EJS script handling for dynamic download URLs (see [yt-dlp EJS Wiki](https://github.com/yt-dlp/yt-dlp/wiki/EJS))
-- [x] Evaluate Deno bundling for EJS template processing
-- [ ] Create Rust layer for secure binary execution with proper CLI argument passing
+- [x] Implement EJS script handling for dynamic download URLs (see [yt-dlp EJS Wiki](https://github.com/yt-dlp/yt-dlp/wiki/EJS))
+- [x] Bundle upstream QuickJS for EJS template processing (hardened runtime compatible, faster than QuickJS-NG)
+- [x] Create Rust layer for secure binary execution with proper CLI argument passing
 - [ ] Add binary caching and versioning mechanism
 - [ ] Implement fallback strategy if binary fetch fails
 

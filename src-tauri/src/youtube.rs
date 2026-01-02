@@ -57,7 +57,7 @@ pub async fn fetch_oembed_metadata(url: &str) -> Result<VideoMetadata, String> {
 pub async fn download_audio<F>(
     url: &str,
     output_path: &Path,
-    deno_path: Option<PathBuf>,
+    qjs_path: Option<PathBuf>,
     mut on_progress: F,
 ) -> Result<(), String>
 where
@@ -90,13 +90,12 @@ where
         .arg("--socket-timeout")
         .arg("30");
 
-    // Add deno executable if provided
-    if let Some(deno) = deno_path {
-        let deno_str = deno.to_string_lossy().to_string();
-        eprintln!("[tubetape] Using deno runtime: {}", deno_str);
-        // yt-dlp expects a JS runtime, using bundled deno, see yt-dlp's --js-runtimes option.
-        cmd.arg("--js-runtimes")
-            .arg(format!("deno:{}", deno_str));
+    if let Some(qjs) = qjs_path {
+        let qjs_str = qjs.to_string_lossy().to_string();
+        eprintln!("[tubetape] Using qjs runtime: {}", qjs_str);
+        cmd.arg("--no-js-runtimes")
+            .arg("--js-runtimes")
+            .arg(format!("quickjs:{}", qjs_str));
     }
 
     let mut child = cmd
