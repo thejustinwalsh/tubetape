@@ -104,6 +104,19 @@ void ffmpeg_lib_set_log_callback(ffmpeg_log_callback callback, void *user_ctx);
 FFmpegResult ffmpeg_lib_main(int argc, char **argv);
 
 /**
+ * Run FFprobe with the given arguments
+ * 
+ * The first argument should be "ffprobe" (program name).
+ * This function is NOT thread-safe - only one FFmpeg/FFprobe
+ * operation can run at a time.
+ * 
+ * @param argc  Argument count (including program name)
+ * @param argv  Argument array (argv[0] = "ffprobe")
+ * @return      Result structure with exit code and status
+ */
+FFmpegResult ffprobe_lib_main(int argc, char **argv);
+
+/**
  * Request cancellation of the currently running operation
  * Can be called from any thread.
  * The running operation will terminate at the next check point.

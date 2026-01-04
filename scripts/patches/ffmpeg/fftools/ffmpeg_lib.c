@@ -41,6 +41,8 @@ static __thread int g_exit_jumped = 0;
 
 extern int ffmpeg_main_internal(int argc, char **argv);
 extern void ffmpeg_cleanup_internal(int ret);
+extern int ffprobe_main_internal(int argc, char **argv);
+extern void ffprobe_cleanup_internal(void);
 
 static void custom_log_callback(void *avcl, int level, const char *fmt, va_list vl) {
     if (!g_log_callback && !g_stderr_fp) {
@@ -149,6 +151,32 @@ FFmpegResult ffmpeg_lib_main(int argc, char **argv) {
     
     ffmpeg_cleanup_internal(result.exit_code);
     
+    atomic_store(&g_running, 0);
+    return result;
+}
+
+FFmpegResult ffprobe_lib_main(int argc, char **argv) {
+    FFmpegResult result = {0, 0, NULL};
+    
+    int expected = 0;
+    if (!atomic_compare_exchange_strong(&g_running, &expected, 1)) {
+        result.exit_code = -1;
+        result.error = "Another FFmpeg operation is already running";
+        return result;
+    }
+    
+    atomic_store(&g_cancel_requested, 0);
+    g_exit_jumped = 0;
+    g_exit_code = 0;
+    
+    if (setjmp(g_exit_jmp) == 0) {
+        result.exit_code = ffprobe_main_internal(argc, argv);
+    } else {
+        result.exit_code = g_exit_code;
+        result.was_aborted = 1;
+    }
+    
+    ffprobe_cleanup_internal();
     atomic_store(&g_running, 0);
     return result;
 }

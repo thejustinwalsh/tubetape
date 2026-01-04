@@ -92,7 +92,60 @@ async function applyLibraryPatches(fftoolsDir: string): Promise<void> {
   console.log("   Applying library patches to fftools...");
 
   const ffmpegC = join(fftoolsDir, "ffmpeg.c");
+  const ffprobeC = join(fftoolsDir, "ffprobe.c");
   const cmdutilsC = join(fftoolsDir, "cmdutils.c");
+  const optCommonC = join(fftoolsDir, "opt_common.c");
+  const ffmpegOptC = join(fftoolsDir, "ffmpeg_opt.c");
+  const twStdoutC = join(fftoolsDir, "textformat", "tw_stdout.c");
+
+  const commonRedirections = [
+    { pattern: /\bprintf\s*\(/g, replacement: "fprintf(ffmpeg_lib_get_stdout(), " },
+    { pattern: /\bvprintf\s*\(/g, replacement: "vfprintf(ffmpeg_lib_get_stdout(), " },
+    { pattern: /\bfprintf\s*\(\s*stdout\s*,/g, replacement: "fprintf(ffmpeg_lib_get_stdout()," },
+    { pattern: /\bvfprintf\s*\(\s*stdout\s*,/g, replacement: "vfprintf(ffmpeg_lib_get_stdout()," },
+    { pattern: /\bfprintf\s*\(\s*stderr\s*,/g, replacement: "fprintf(ffmpeg_lib_get_stderr()," },
+    { pattern: /\bvfprintf\s*\(\s*stderr\s*,/g, replacement: "vfprintf(ffmpeg_lib_get_stderr()," },
+    { pattern: /\bfflush\s*\(\s*stdout\s*\)/g, replacement: "fflush(ffmpeg_lib_get_stdout())" },
+    { pattern: /\bfflush\s*\(\s*stderr\s*\)/g, replacement: "fflush(ffmpeg_lib_get_stderr())" },
+  ];
+
+  const filesToRedir = [ffmpegC, ffprobeC, cmdutilsC, optCommonC, ffmpegOptC, twStdoutC];
+
+  for (const file of filesToRedir) {
+    if (await exists(file)) {
+      let content = await Bun.file(file).text();
+      const fileName = basename(file);
+
+      let externs = "";
+      if (fileName === "ffmpeg.c") {
+        externs = `
+extern void ffmpeg_lib_exit_handler(int code);
+extern FILE *ffmpeg_lib_get_stdout(void);
+extern FILE *ffmpeg_lib_get_stderr(void);
+extern int ffmpeg_lib_check_cancel(void);`;
+      } else if (fileName === "ffprobe.c") {
+        externs = `
+extern void ffmpeg_lib_exit_handler(int code);
+extern FILE *ffmpeg_lib_get_stdout(void);
+extern FILE *ffmpeg_lib_get_stderr(void);`;
+      } else if (fileName === "cmdutils.c" || fileName === "opt_common.c" || fileName === "ffmpeg_opt.c" || fileName === "tw_stdout.c") {
+        externs = `
+extern FILE *ffmpeg_lib_get_stdout(void);
+extern FILE *ffmpeg_lib_get_stderr(void);`;
+      }
+
+      if (!content.includes("ffmpeg_lib.h")) {
+        const injection = `#include "ffmpeg_lib.h"\n${externs}\n`;
+        if (content.includes('#include "config.h"')) {
+          content = content.replace('#include "config.h"', `#include "config.h"\n${injection}`);
+        } else {
+          content = injection + content;
+        }
+        await Bun.write(file, content);
+      }
+      await patchFile(file, commonRedirections);
+    }
+  }
 
   const ffmpegPatches = await patchFile(ffmpegC, [
     { pattern: /int\s+main\s*\(\s*int\s+argc\s*,\s*char\s*\*\*\s*argv\s*\)/g, replacement: "int ffmpeg_main_internal(int argc, char **argv)" },
@@ -100,38 +153,22 @@ async function applyLibraryPatches(fftoolsDir: string): Promise<void> {
     { pattern: /\bexit\s*\(\s*([^)]+)\s*\)/g, replacement: "ffmpeg_lib_exit_handler($1)" },
   ]);
 
-  const ffmpegHeaderPatch = await patchFile(ffmpegC, [
-    {
-      pattern: /#include "ffmpeg_utils.h"/,
-      replacement: `#include "ffmpeg_utils.h"
-#include "ffmpeg_lib.h"
-
-extern void ffmpeg_lib_exit_handler(int code);
-extern FILE *ffmpeg_lib_get_stdout(void);
-extern FILE *ffmpeg_lib_get_stderr(void);
-extern int ffmpeg_lib_check_cancel(void);`,
-    },
+  const ffprobePatches = await patchFile(ffprobeC, [
+    { pattern: /int\s+main\s*\(\s*int\s+argc\s*,\s*char\s*\*\*\s*argv\s*\)/g, replacement: "int ffprobe_main_internal(int argc, char **argv)" },
+    { pattern: /\bexit\s*\(\s*(\d+)\s*\)/g, replacement: "ffmpeg_lib_exit_handler($1)" },
+    { pattern: /\bexit\s*\(\s*([^)]+)\s*\)/g, replacement: "ffmpeg_lib_exit_handler($1)" },
+    { pattern: /\bprogram_name\b/g, replacement: "ffprobe_program_name" },
+    { pattern: /\bprogram_birth_year\b/g, replacement: "ffprobe_program_birth_year" },
+    { pattern: /\bshow_help_default\b/g, replacement: "ffprobe_show_help_default" },
+    { pattern: /av_log_set_callback\s*\(\s*log_callback\s*\)\s*;/g, replacement: "/* av_log_set_callback(log_callback); */" },
+    { pattern: /av_log_set_callback\s*\(\s*log_callback_help\s*\)\s*;/g, replacement: "/* av_log_set_callback(log_callback_help); */" },
   ]);
 
-  const cmdutilsPatches = await patchFile(cmdutilsC, [
-    { pattern: /\bprintf\s*\(/g, replacement: "fprintf(ffmpeg_lib_get_stdout(), " },
-    { pattern: /vfprintf\s*\(\s*stdout\s*,/g, replacement: "vfprintf(ffmpeg_lib_get_stdout()," },
-    { pattern: /fprintf\s*\(\s*stderr\s*,/g, replacement: "fprintf(ffmpeg_lib_get_stderr()," },
-  ]);
-
-  const cmdutilsHeaderPatch = await patchFile(cmdutilsC, [
-    {
-      pattern: /#include "opt_common.h"/,
-      replacement: /*c*/`#include "opt_common.h"
-
-extern FILE *ffmpeg_lib_get_stdout(void);
-extern FILE *ffmpeg_lib_get_stderr(void);`,
-    },
-  ]);
-
-  console.log(`      ffmpeg.c: ${ffmpegPatches.replacements + ffmpegHeaderPatch.replacements} patches`);
-  console.log(`      cmdutils.c: ${cmdutilsPatches.replacements + cmdutilsHeaderPatch.replacements} patches`);
+  console.log(`      ffmpeg.c: ${ffmpegPatches.replacements} patches`);
+  console.log(`      ffprobe.c: ${ffprobePatches.replacements} patches`);
 }
+
+
 
 async function addCleanupFunctions(fftoolsDir: string): Promise<void> {
   const ffmpegC = join(fftoolsDir, "ffmpeg.c");
@@ -184,6 +221,28 @@ void ffmpeg_cleanup_internal(int ret) {
     console.log("      Added ffmpeg_cleanup_internal()");
   }
 }
+
+async function addFFprobeCleanupFunction(fftoolsDir: string): Promise<void> {
+  const ffprobeC = join(fftoolsDir, "ffprobe.c");
+
+  let ffprobeContent = await Bun.file(ffprobeC).text();
+  if (!ffprobeContent.includes("ffprobe_cleanup_internal")) {
+    const cleanupFunc = /*c*/`
+void ffprobe_cleanup_internal(void);
+int ffprobe_main_internal(int argc, char **argv);
+
+void ffprobe_cleanup_internal(void) {
+}
+`;
+    ffprobeContent = ffprobeContent.replace(
+      /int ffprobe_main_internal\(/,
+      cleanupFunc + "\nint ffprobe_main_internal("
+    );
+    await Bun.write(ffprobeC, ffprobeContent);
+    console.log("      Added ffprobe_cleanup_internal()");
+  }
+}
+
 
 async function buildSharedLibrary(sourceDir: string, outputDir: string): Promise<string> {
   const { isMacOS, isLinux, arch } = getPlatformInfo();
@@ -263,6 +322,18 @@ async function buildSharedLibrary(sourceDir: string, outputDir: string): Promise
     "cmdutils.c",
     "opt_common.c",
     "graph/graphprint_stub.c",
+    "ffprobe.c",
+    "textformat/avtextformat.c",
+    "textformat/tf_compact.c",
+    "textformat/tf_default.c",
+    "textformat/tf_flat.c",
+    "textformat/tf_ini.c",
+    "textformat/tf_json.c",
+    "textformat/tf_mermaid.c",
+    "textformat/tf_xml.c",
+    "textformat/tw_avio.c",
+    "textformat/tw_buffer.c",
+    "textformat/tw_stdout.c",
   ];
   
   const objectFiles: string[] = [];
@@ -335,6 +406,7 @@ async function verifyLibrary(libPath: string): Promise<void> {
   const symbolsToCheck = [
     "ffmpeg_lib_init",
     "ffmpeg_lib_main",
+    "ffprobe_lib_main",
     "ffmpeg_lib_cleanup",
     "ffmpeg_lib_set_io",
   ];
@@ -373,6 +445,7 @@ export async function buildFFmpeg(config: BuildConfig): Promise<string[]> {
   await copyLibraryFiles(fftoolsDir);
   await applyLibraryPatches(fftoolsDir);
   await addCleanupFunctions(fftoolsDir);
+  await addFFprobeCleanupFunction(fftoolsDir);
 
   const libPath = await buildSharedLibrary(sourceDir, outputDir);
 

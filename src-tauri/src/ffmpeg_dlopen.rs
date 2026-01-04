@@ -33,6 +33,7 @@ struct FFmpegResultC {
 type FFmpegLibInit = unsafe extern "C" fn() -> c_int;
 type FFmpegLibSetIO = unsafe extern "C" fn(*const FFmpegIOContext);
 type FFmpegLibMain = unsafe extern "C" fn(c_int, *const *const c_char) -> FFmpegResultC;
+type FFprobeLibMain = unsafe extern "C" fn(c_int, *const *const c_char) -> FFmpegResultC;
 type FFmpegLibCleanup = unsafe extern "C" fn();
 type FFmpegLibCancel = unsafe extern "C" fn();
 type FFmpegLibIsRunning = unsafe extern "C" fn() -> c_int;
@@ -112,6 +113,7 @@ struct FFmpegLibrary {
     init: FFmpegLibInit,
     set_io: FFmpegLibSetIO,
     ffmpeg_main: FFmpegLibMain,
+    ffprobe_main: FFprobeLibMain,
     cleanup: FFmpegLibCleanup,
     cancel: FFmpegLibCancel,
     is_running: FFmpegLibIsRunning,
@@ -151,6 +153,7 @@ impl FFmpegLibrary {
             init: std::mem::transmute(get_sym("ffmpeg_lib_init")?),
             set_io: std::mem::transmute(get_sym("ffmpeg_lib_set_io")?),
             ffmpeg_main: std::mem::transmute(get_sym("ffmpeg_lib_main")?),
+            ffprobe_main: std::mem::transmute(get_sym("ffprobe_lib_main")?),
             cleanup: std::mem::transmute(get_sym("ffmpeg_lib_cleanup")?),
             cancel: std::mem::transmute(get_sym("ffmpeg_lib_cancel")?),
             is_running: std::mem::transmute(get_sym("ffmpeg_lib_is_running")?),
@@ -213,7 +216,13 @@ fn run_ffmpeg_command_new_api(
         };
         (lib.set_io)(&io_ctx);
 
-        let mut c_args: Vec<CString> = vec![CString::new(command).map_err(|e| e.to_string())?];
+        // Use the correct program name as argv[0]
+        let prog_name = match command {
+            "ffmpeg" => "ffmpeg",
+            "ffprobe" => "ffprobe",
+            _ => command,
+        };
+        let mut c_args: Vec<CString> = vec![CString::new(prog_name).map_err(|e| e.to_string())?];
         for arg in &args {
             c_args.push(CString::new(arg.as_str()).map_err(|e| e.to_string())?);
         }
@@ -222,16 +231,18 @@ fn run_ffmpeg_command_new_api(
 
         eprintln!(
             "[ffmpeg_dlopen] Executing {} with {} args via library API",
-            command,
+            prog_name,
             argv.len() - 1
         );
 
-        if command != "ffmpeg" {
-            lib.unload();
-            return Err(format!("Only ffmpeg is supported via library API, not {}", command));
-        }
-
-        let result_c = (lib.ffmpeg_main)(argv.len() as c_int, argv.as_ptr());
+        let result_c = match command {
+            "ffmpeg" => (lib.ffmpeg_main)(argv.len() as c_int, argv.as_ptr()),
+            "ffprobe" => (lib.ffprobe_main)(argv.len() as c_int, argv.as_ptr()),
+            _ => {
+                lib.unload();
+                return Err(format!("Only ffmpeg and ffprobe are supported via library API, not {}", command));
+            }
+        };
 
         if !stdout_fp.is_null() {
             libc::fclose(stdout_fp);
@@ -247,10 +258,12 @@ fn run_ffmpeg_command_new_api(
 
         let _ = std::fs::remove_file(&stdout_path);
         let _ = std::fs::remove_file(&stderr_path);
+ 
+        (lib.cleanup)();
 
-        let error = if result_c.error.is_null() {
-            None
-        } else {
+         let error = if result_c.error.is_null() {
+             None
+         } else {
             Some(CStr::from_ptr(result_c.error).to_string_lossy().to_string())
         };
 
@@ -456,4 +469,121 @@ pub async fn execute_js_challenge(
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(stdout.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get_test_lib_path() -> Option<PathBuf> {
+        let cwd = std::env::current_dir().ok()?;
+
+        let dev_path = cwd.join("binaries").join("ffmpeg").join(get_ffmpeg_lib_name());
+        if dev_path.exists() {
+            return Some(dev_path);
+        }
+
+        let workspace_path = cwd
+            .join("src-tauri")
+            .join("binaries")
+            .join("ffmpeg")
+            .join(get_ffmpeg_lib_name());
+        if workspace_path.exists() {
+            return Some(workspace_path);
+        }
+
+        None
+    }
+
+    #[test]
+    fn test_ffmpeg_library_loads() {
+        let lib_path = match get_test_lib_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping test: FFmpeg library not found");
+                return;
+            }
+        };
+
+        unsafe {
+            let lib = FFmpegLibrary::load(&lib_path);
+            assert!(lib.is_ok(), "Failed to load library: {:?}", lib.err());
+
+            let lib = lib.unwrap();
+            lib.unload();
+        }
+    }
+
+    #[test]
+    fn test_ffmpeg_version() {
+        let lib_path = match get_test_lib_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping test: FFmpeg library not found");
+                return;
+            }
+        };
+
+        unsafe {
+            let lib = FFmpegLibrary::load(&lib_path).unwrap();
+
+            let version_ptr = (lib.version)();
+            assert!(!version_ptr.is_null());
+
+            let version = CStr::from_ptr(version_ptr).to_string_lossy();
+            assert!(!version.is_empty());
+
+            lib.unload();
+        }
+    }
+
+    #[test]
+    fn test_ffprobe_executes() {
+        let lib_path = match get_test_lib_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping test: FFmpeg library not found");
+                return;
+            }
+        };
+
+        let args = vec!["-hide_banner".to_string(), "-bsfs".to_string()];
+        let result = run_ffmpeg_command(&lib_path, "ffprobe", args);
+        assert!(result.is_ok(), "ffprobe failed: {:?}", result.err());
+
+        let result = result.unwrap();
+        print!("ffprobe stdout: {}", result.stdout);
+        print!("ffprobe stderr: {}", result.stderr);
+
+        // Check for expected output markers
+        assert!(
+            result.stdout.contains("Bitstream filters") || result.stderr.contains("Bitstream filters"),
+            "Expected ffprobe to list bitstream filters"
+        );
+        // Should not print ffmpeg banner
+        assert!(
+            !result.stdout.contains("ffmpeg version") && !result.stderr.contains("ffmpeg version"),
+            "Should not print ffmpeg banner in ffprobe output"
+        );
+    }
+
+    #[test]
+    fn test_ffmpeg_executes() {
+        let lib_path = match get_test_lib_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping test: FFmpeg library not found");
+                return;
+            }
+        };
+
+        let result = run_ffmpeg_command(&lib_path, "ffmpeg", vec!["-version".to_string()]);
+        assert!(result.is_ok(), "ffmpeg failed: {:?}", result.err());
+
+        let result = result.unwrap();
+        assert!(
+            result.stderr.contains("ffmpeg") || result.stdout.contains("ffmpeg"),
+            "Expected ffmpeg version info"
+        );
+    }
 }
