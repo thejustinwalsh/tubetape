@@ -95,6 +95,11 @@
       "type": "source",
       "repo": "bellard/quickjs",
       "sha": "de4d3927b8edff5fbfee1f69cfeef840844259e9"
+    },
+    "ffmpeg": {
+      "type": "source",
+      "repo": "FFmpeg/FFmpeg",
+      "sha": "649a4e98f40feceea6c6bd933040b6ba9583980e"
     }
   }
 }

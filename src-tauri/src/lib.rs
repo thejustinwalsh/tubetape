@@ -1,5 +1,7 @@
 mod audio;
 mod binary;
+mod ffmpeg_dlopen;
+mod http;
 mod youtube;
 
 use serde::{Deserialize, Serialize};
@@ -321,6 +323,11 @@ pub fn run() {
             check_cached_audio,
             get_app_stats,
             binary::get_qjs_status,
+            http::http_request,
+            http::download_to_file,
+            ffmpeg_dlopen::dlopen_ffmpeg,
+            ffmpeg_dlopen::ffprobe_capabilities,
+            ffmpeg_dlopen::execute_js_challenge,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -4787,6 +4787,7 @@ version = "0.1.1"
 dependencies = [
  "dirs 5.0.1",
  "lazy_static",
+ "libc",
  "regex",
  "reqwest",
  "serde",
