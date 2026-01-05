@@ -36,7 +36,8 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "binaries/qjs/*"
+      "binaries/qjs/*",
+      "binaries/ffmpeg/*"
     ]
   }
 }

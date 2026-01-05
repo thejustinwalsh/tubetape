@@ -5,7 +5,7 @@ use std::os::raw::{c_char, c_int, c_void};
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::Mutex;
-use tauri::Manager;
+
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FFmpegResult {
@@ -67,30 +67,7 @@ fn get_ffmpeg_lib_name() -> &'static str {
 }
 
 fn get_lib_path(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
-    let lib_name = get_ffmpeg_lib_name();
-
-    if let Ok(resource_dir) = app_handle.path().resource_dir() {
-        let lib_path = resource_dir.join("binaries").join("ffmpeg").join(lib_name);
-        if lib_path.exists() {
-            return Some(lib_path);
-        }
-    }
-
-    #[cfg(debug_assertions)]
-    {
-        if let Ok(cwd) = std::env::current_dir() {
-            let dev_path = cwd
-                .join("src-tauri")
-                .join("binaries")
-                .join("ffmpeg")
-                .join(lib_name);
-            if dev_path.exists() {
-                return Some(dev_path);
-            }
-        }
-    }
-
-    None
+    crate::binary::get_bundled_library_path(app_handle, "ffmpeg", get_ffmpeg_lib_name())
 }
 
 fn get_static_capabilities() -> FFmpegResult {

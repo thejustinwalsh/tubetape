@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "bun run bundle:yt-dlp && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "lint": "eslint",
@@ -19,7 +19,9 @@
     "test:coverage": "vitest run --coverage",
     "test:visual": "playwright test",
     "test:visual:update": "bun run ladle:build && playwright test -u",
-    "test:visual:report": "playwright show-report .ladle/playwright-report"
+    "test:visual:report": "playwright show-report .ladle/playwright-report",
+    "bundle:yt-dlp": "bun run scripts/bundle-yt-dlp.ts",
+    "bundle:yt-dlp:update": "bun run scripts/bundle-yt-dlp.ts --update"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -60,6 +62,7 @@
     "globals": "^16.5.0",
     "jsdom": "^27.4.0",
     "postcss": "^8.5.6",
+    "pyodide": "^0.27.4",
     "semver": "^7.7.3",
     "tailwindcss": "4.1.18",
     "typescript": "~5.8.3",
@@ -102,6 +105,41 @@
       "type": "source",
       "repo": "FFmpeg/FFmpeg",
       "sha": "649a4e98f40feceea6c6bd933040b6ba9583980e"
+    }
+  },
+  "pyodideDeps": {
+    "version": "0.27.4",
+    "ytDlpVersion": "2025.12.8",
+    "integrity": {
+      "pyodideCore": {
+        "pyodide.js": {
+          "sha256": "05744e77e593c88df0e9e257a21ac07ee4690822cbac4fabe98f187104a8529e"
+        },
+        "pyodide.mjs": {
+          "sha256": "fb7837fd58fa1a3bdeb23b9bf4b7c4e5a93cc0f83cfb11fc5083a83cc11cb905"
+        },
+        "pyodide.asm.js": {
+          "sha256": "5a84ad4ad314c2c6d0a165baa6c03339999c87f26cfb74c4de0aaa6f1214f390"
+        },
+        "pyodide.asm.wasm": {
+          "sha256": "c9d86821130648df7cfda3c463047f44c08cfbeaed5272dc968b8b1db8fd399e"
+        },
+        "pyodide-lock.json": {
+          "sha256": "faf73d755b064c490d23b8f15f16dbd4dfdc3c5d1d2b7a8628443bd1b60b05e7"
+        },
+        "python_stdlib.zip": {
+          "sha256": "c09fdf66a95f7bdc52dcbb09d73c599e57ec45eecc24b37e6e407312d9a9ddb1"
+        }
+      },
+      "sslWheel": {
+        "sha256": "e99f9816a9246533ae1576078a3c3a402466c8ce6248f7dffa4fac80edaab02c"
+      },
+      "opensslZip": {
+        "sha256": "3a070c2b87fb4d39033e2f0a0dc22210fe046eeb04c32304dfbd78bb05ffcab9"
+      },
+      "ytDlpWheel": {
+        "sha256": "36e2584342e409cfbfa0b5e61448a1c5189e345cf4564294456ee509e7d3e065"
+      }
     }
   }
 }

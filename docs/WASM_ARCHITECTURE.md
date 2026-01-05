@@ -5,15 +5,18 @@
 This document outlines a **hybrid architecture** for Tubetape that combines:
 
 - **yt-dlp in WASM (Pyodide)** - Enables OTA updates for the frequently-changing component
-- **ffmpeg as native binary** - Full performance, no WASM memory limitations
+- **ffmpeg via unified dlopen (all platforms)** - Full performance, no WASM memory limitations, single code path
 - **WebView-based nsig solving** - Eliminates QuickJS binary dependency
+
+**Key Refinement (Updated):** The ffmpeg integration uses a **unified dlopen approach on ALL platforms** (macOS, Linux, Windows, iOS, Android) with yt-dlp as the authoritative orchestrator. See [WASM_UNIFIED_DLOPEN_DESIGN.md](WASM_UNIFIED_DLOPEN_DESIGN.md) for architectural details.
 
 This approach enables:
 
 1. **OTA updates** for yt-dlp without app store review (the component that changes constantly)
 2. **Native performance** for ffmpeg (stable, memory-intensive operations)
-3. **Cross-platform support** including iOS (via dlopen) and Android
+3. **Cross-platform support** including iOS (via dlopen) and Android using the same dlopen mechanism
 4. **WebView-based nsig challenge solving** instead of bundled QuickJS
+5. **Single code path** for ffmpeg invocation (no platform-specific branching)
 
 ## Current Architecture (Desktop-Only)
 

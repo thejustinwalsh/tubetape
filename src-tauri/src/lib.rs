@@ -180,24 +180,76 @@ async fn get_waveform(audio_path: String) -> Result<WaveformData, String> {
     audio::generate_waveform_peaks(&path, |_, _| {})
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase", tag = "event", content = "data")]
+pub enum WaveformEvent {
+    Started { audio_path: String },
+    AudioInfo { sample_rate: u32, duration_secs: f64 },
+    Progress { total_peaks: usize },
+    Chunk { peaks: Vec<f32>, offset: usize },
+    Completed { peaks: Vec<f32>, duration_secs: f64 },
+    Error { message: String },
+}
+
+#[tauri::command]
+async fn generate_waveform_stream(
+    audio_path: String,
+    on_event: Channel<WaveformEvent>,
+) -> Result<WaveformData, String> {
+    let path = std::path::PathBuf::from(&audio_path);
+    
+    let _ = on_event.send(WaveformEvent::Started {
+        audio_path: audio_path.clone(),
+    });
+
+    let (duration_secs, sample_rate) = audio::get_audio_info(&path)?;
+    let expected_peaks = audio::estimate_peak_count(duration_secs, sample_rate);
+
+    let _ = on_event.send(WaveformEvent::AudioInfo {
+        sample_rate,
+        duration_secs,
+    });
+    
+    let _ = on_event.send(WaveformEvent::Progress {
+        total_peaks: expected_peaks,
+    });
+
+    let on_event_clone = on_event.clone();
+    let waveform = audio::generate_waveform_peaks(&path, move |peaks, offset| {
+        let _ = on_event_clone.send(WaveformEvent::Chunk {
+            peaks: peaks.to_vec(),
+            offset,
+        });
+    })?;
+
+    let _ = on_event.send(WaveformEvent::Completed {
+        peaks: waveform.peaks.clone(),
+        duration_secs: waveform.duration_secs,
+    });
+
+    Ok(waveform)
+}
+
 #[tauri::command]
 async fn check_cached_audio(
     app: tauri::AppHandle,
     video_id: String,
 ) -> Result<Option<CachedAudioInfo>, String> {
     let output_dir = get_audio_output_dir(&app)?;
-    let audio_path = output_dir.join(format!("{}.mp3", video_id));
-
-    if audio_path.exists() {
-        let (duration_secs, sample_rate) = audio::get_audio_info(&audio_path)?;
-        Ok(Some(CachedAudioInfo {
-            audio_path: audio_path.to_string_lossy().to_string(),
-            duration_secs,
-            sample_rate,
-        }))
-    } else {
-        Ok(None)
+    
+    for ext in ["aac", "m4a", "mp3"] {
+        let audio_path = output_dir.join(format!("{}.{}", video_id, ext));
+        if audio_path.exists() {
+            let (duration_secs, sample_rate) = audio::get_audio_info(&audio_path)?;
+            return Ok(Some(CachedAudioInfo {
+                audio_path: audio_path.to_string_lossy().to_string(),
+                duration_secs,
+                sample_rate,
+            }));
+        }
     }
+    
+    Ok(None)
 }
 
 #[derive(Clone, Serialize)]
@@ -319,6 +371,7 @@ pub fn run() {
             fetch_video_metadata,
             extract_audio,
             get_waveform,
+            generate_waveform_stream,
             export_sample,
             check_cached_audio,
             get_app_stats,

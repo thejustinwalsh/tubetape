@@ -2,11 +2,19 @@
 
 ## Overview
 
-This document outlines the phased implementation plan for Tubetape's **hybrid architecture**:
+This document outlines the phased implementation plan for Tubetape's **unified hybrid architecture**:
 
-- **yt-dlp in WASM (Pyodide)** - For OTA updates (frequently changes due to YouTube)
-- **ffmpeg native** - For performance (stable, memory-intensive)
+- **yt-dlp in WASM (Pyodide)** - Authoritative orchestrator, OTA-updatable
+- **ffmpeg via dlopen (all platforms)** - Native performance, yt-dlp passes full args through bridge
 - **WebView JS sandbox** - For nsig challenges (eliminates QuickJS)
+
+### Key Design Principle
+
+**yt-dlp remains the authority on ffmpeg invocation.** The native ffmpeg adapter is a transparent proxy that:
+1. Receives the complete command + args from yt-dlp (running in Pyodide)
+2. Routes them through native dlopen (same approach across all platforms)
+3. Returns stdout/stderr/exit code back to yt-dlp
+4. Requires NO hardcoded ffmpeg args on the native side
 
 ### Priority Order
 
@@ -15,7 +23,7 @@ This document outlines the phased implementation plan for Tubetape's **hybrid ar
 | 1 | HTTP Bridge | HIGH | Foundation for all WASM network |
 | 2 | Pyodide + yt-dlp | HIGH | Core value: OTA-updatable extraction |
 | 3 | JS Sandbox (nsig) | HIGH | Required for YouTube downloads |
-| 4 | Native ffmpeg Adapter | MEDIUM | Already works on desktop, iOS needs dlopen |
+| 4 | dlopen FFmpeg Adapter | MEDIUM | Unified approach: all platforms use dlopen, no subprocess |
 | 5 | OTA Update System | MEDIUM | Polish for production |
 
 ---
@@ -605,27 +613,36 @@ patch_urllib()
 patch_yt_dlp_networking()
 ```
 
-### 3.2 Subprocess Patch (Native ffmpeg via Tauri)
+### 3.2 dlopen Adapter Patch (Native ffmpeg via Tauri)
 
-**File: `src/wasm/patches/subprocess_patch.py`**
+**File: `src/wasm/patches/dlopen_adapter.py`**
 ```python
 """
-Patches subprocess calls to route ffmpeg through Tauri's native adapter.
-This keeps ffmpeg native for full performance while yt-dlp runs in WASM.
+Patches subprocess calls to route ffmpeg through native dlopen adapter.
+
+Design principle: yt-dlp remains the authoritative orchestrator.
+This patch is a transparent proxy that routes all ffmpeg args as-is
+to the native dlopen implementation. No hardcoding of ffmpeg args.
 """
 
 from yt_dlp.utils import Popen
-from js import nativeFFmpeg, Object
+from js import nativeFFmpegAdapter
 from pyodide.ffi import run_sync, to_js
+import subprocess
 
 def patched_popen_run(cls, args, **kwargs):
     """
-    Intercept subprocess.Popen.run and route ffmpeg to native.
+    Intercept subprocess.Popen.run and route ffmpeg to native dlopen.
     
     The native side will:
-    1. Download video to temp file (if needed)
-    2. Run native ffmpeg (subprocess on desktop, dlopen on iOS)
-    3. Return the processed audio file path
+    1. Load ffmpeg via dlopen (works on all platforms: macOS, Linux, Windows, iOS, Android)
+    2. Call ffmpeg_main with all args as-is from yt-dlp
+    3. Return exit code and any output
+    
+    This approach:
+    - Keeps yt-dlp as the authority (all args come from it)
+    - Works uniformly across all platforms
+    - No platform-specific subprocess vs dlopen branching needed
     """
     if not args:
         raise ValueError("No command provided")
@@ -633,14 +650,22 @@ def patched_popen_run(cls, args, **kwargs):
     command = args[0]
     
     if command in ('ffmpeg', 'ffprobe'):
-        # Route to native ffmpeg via Tauri invoke
+        # Route to native dlopen adapter via Tauri invoke
+        # Pass command name and all args exactly as yt-dlp specifies them
         result = run_sync(
-            nativeFFmpeg(
+            nativeFFmpegAdapter(
                 command,
-                to_js(args[1:], dict_converter=Object.fromEntries)
+                to_js(list(args[1:]))  # All remaining args, unmodified
             )
         )
-        return result.to_py()
+        # Convert result back to Python and construct subprocess.CompletedProcess
+        result_py = result.to_py()
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=result_py['exit_code'],
+            stdout=result_py.get('stdout', b''),
+            stderr=result_py.get('stderr', b'')
+        )
     
     # Block other subprocess calls
     raise FileNotFoundError(
