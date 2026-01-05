@@ -1157,6 +1157,11 @@ class _DownloadNeeded(Exception):
 
 _original_urlopen = YoutubeDL.urlopen
 
+# URL patterns that should use URL-only cache matching (for pre-fetched resources)
+_URL_ONLY_CACHE_PATTERNS = [
+    'github.com/yt-dlp/ejs/releases/download/',
+]
+
 def _cached_urlopen(self, req):
     if isinstance(req, str):
         req = Request(req)
@@ -1168,16 +1173,31 @@ def _cached_urlopen(self, req):
     
     cache_key = (url, method, str(sorted(headers.items())), str(data)[:100] if data else None)
     
+    # Check exact cache key match first
     if cache_key in _http_cache:
         cached = _http_cache[cache_key]
         print(f"[yt-dlp] Cache hit: {method} {url[:60]}...")
-        # Return a fresh Response with the cached data
         return Response(
             io.BytesIO(cached['body']),
             url,
             cached['headers'],
             status=cached['status']
         )
+    
+    # For pre-fetched resources (like EJS scripts), try URL-only matching
+    # This handles cases where headers differ between pre-fetch and actual request
+    for pattern in _URL_ONLY_CACHE_PATTERNS:
+        if pattern in url:
+            for cached_key, cached in _http_cache.items():
+                if cached_key[0] == url and cached_key[1] == method:
+                    print(f"[yt-dlp] Cache hit (URL match): {method} {url[:60]}...")
+                    return Response(
+                        io.BytesIO(cached['body']),
+                        url,
+                        cached['headers'],
+                        status=cached['status']
+                    )
+            break
     
     print(f"[yt-dlp] Cache miss, need HTTP: {method} {url[:60]}...")
     raise _HTTPNeeded(url, method, headers, data, cache_key)
@@ -1327,6 +1347,38 @@ async def _do_jsc_async(code):
     return result.result if hasattr(result, 'result') else str(result)
 
 # =============================================================================
+# EJS Script Pre-fetching (required before extraction to avoid sync HTTP issues)
+# =============================================================================
+
+# EJS script version - update this when yt-dlp updates its EJS dependency
+_EJS_VERSION = '0.3.2'
+_EJS_REPOSITORY = 'yt-dlp/ejs'
+_EJS_SCRIPTS = [
+    'yt.solver.lib.min.js',
+    'yt.solver.core.min.js',
+]
+
+async def prefetch_ejs_scripts():
+    """Pre-fetch EJS challenge solver scripts so they're cached before extraction."""
+    global _http_cache
+    
+    for script_name in _EJS_SCRIPTS:
+        url = f'https://github.com/{_EJS_REPOSITORY}/releases/download/{_EJS_VERSION}/{script_name}'
+        cache_key = (url, 'GET', str(sorted({}.items())), None)
+        
+        if cache_key in _http_cache:
+            print(f"[yt-dlp] EJS script already cached: {script_name}")
+            continue
+        
+        print(f"[yt-dlp] Pre-fetching EJS script: {script_name}")
+        try:
+            response = await _do_http_async(url, 'GET', {}, None)
+            _http_cache[cache_key] = response
+            print(f"[yt-dlp] EJS script cached: {script_name} ({len(response.get('body', b''))} bytes)")
+        except Exception as e:
+            print(f"[yt-dlp] Warning: Failed to pre-fetch {script_name}: {e}")
+
+# =============================================================================
 # Async extraction with exception-based HTTP/JSC yielding
 # =============================================================================
 
@@ -1335,6 +1387,9 @@ async def extract_info_async(url, opts=None):
     _http_cache.clear()
     _jsc_cache.clear()
     
+    # Pre-fetch EJS scripts before extraction to avoid sync HTTP issues in JSC provider
+    await prefetch_ejs_scripts()
+    
     opts = opts or {}
     ydl_opts = {
         'quiet': opts.get('quiet', True),
@@ -1342,6 +1397,7 @@ async def extract_info_async(url, opts=None):
         'extract_flat': opts.get('extract_flat', False),
         'noplaylist': opts.get('noplaylist', True),
         'socket_timeout': opts.get('socket_timeout', 30),
+        'remote_components': ['ejs:github', 'ejs:npm'],  # Enable EJS script downloads for JSC
     }
     
     max_iterations = 100
@@ -1377,6 +1433,9 @@ async def extract_audio_async(url, output_path, opts=None):
     _download_cache.clear()
     _jsc_cache.clear()
     
+    # Pre-fetch EJS scripts before extraction to avoid sync HTTP issues in JSC provider
+    await prefetch_ejs_scripts()
+    
     opts = opts or {}
     ydl_opts = {
         'format': opts.get('format', 'bestaudio/best'),
@@ -1385,6 +1444,7 @@ async def extract_audio_async(url, output_path, opts=None):
         'no_warnings': opts.get('no_warnings', False),
         'noplaylist': opts.get('noplaylist', True),
         'socket_timeout': opts.get('socket_timeout', 30),
+        'remote_components': ['ejs:github', 'ejs:npm'],  # Enable EJS script downloads for JSC
     }
     
     max_iterations = 100

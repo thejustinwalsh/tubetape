@@ -30,7 +30,14 @@ pub async fn fetch_oembed_metadata(url: &str) -> Result<VideoMetadata, String> {
         video_id
     );
 
-    let response: serde_json::Value = reqwest::get(&oembed_url)
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15")
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let response: serde_json::Value = client
+        .get(&oembed_url)
+        .send()
         .await
         .map_err(|e| format!("Failed to fetch metadata: {}", e))?
         .json()

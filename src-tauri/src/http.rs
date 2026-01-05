@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::error::Error;
 use std::path::Path;
 use tokio::io::AsyncWriteExt;
 
@@ -49,7 +50,16 @@ pub async fn http_request(
     let response = request
         .send()
         .await
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
+        .map_err(|e| {
+            eprintln!("[http] Request error details: {:?}", e);
+            eprintln!("[http] Is timeout: {}", e.is_timeout());
+            eprintln!("[http] Is connect: {}", e.is_connect());
+            eprintln!("[http] Is request: {}", e.is_request());
+            if let Some(source) = e.source() {
+                eprintln!("[http] Source error: {:?}", source);
+            }
+            format!("HTTP request failed: {}", e)
+        })?;
 
     let status = response.status().as_u16();
     
