@@ -206,6 +206,7 @@ void ffmpeg_cleanup_internal(int ret) {
         av_freep(&decoders);
         nb_decoders = 0;
     }
+    hw_device_free_all();
     uninit_opts();
     if (vstats_file) {
         fclose(vstats_file);
@@ -232,6 +233,91 @@ void ffprobe_cleanup_internal(void);
 int ffprobe_main_internal(int argc, char **argv);
 
 void ffprobe_cleanup_internal(void) {
+    /* Reset all do_* flags to their initial values */
+    do_analyze_frames = 0;
+    do_bitexact = 0;
+    do_count_frames = 0;
+    do_count_packets = 0;
+    do_read_frames = 0;
+    do_read_packets = 0;
+    do_show_chapters = 0;
+    do_show_error = 0;
+    do_show_format = 0;
+    do_show_frames = 0;
+    do_show_packets = 0;
+    do_show_programs = 0;
+    do_show_stream_groups = 0;
+    do_show_stream_group_components = 0;
+    do_show_streams = 0;
+    do_show_stream_disposition = 0;
+    do_show_stream_group_disposition = 0;
+    do_show_data = 0;
+    do_show_program_version = 0;
+    do_show_library_versions = 0;
+    do_show_pixel_formats = 0;
+    do_show_pixel_format_flags = 0;
+    do_show_pixel_format_components = 0;
+    do_show_log = 0;
+
+    /* Reset tag display flags */
+    do_show_chapter_tags = 0;
+    do_show_format_tags = 0;
+    do_show_frame_tags = 0;
+    do_show_program_tags = 0;
+    do_show_stream_group_tags = 0;
+    do_show_stream_tags = 0;
+    do_show_packet_tags = 0;
+
+    /* Reset display options */
+    show_value_unit = 0;
+    use_value_prefix = 0;
+    use_byte_value_binary_prefix = 0;
+    use_value_sexagesimal_format = 0;
+    show_private_data = 1;  /* Note: default is 1 */
+    show_optional_fields = SHOW_OPTIONAL_FIELDS_AUTO;
+    find_stream_info = 1;   /* Note: default is 1 */
+
+    /* Free and reset string pointers */
+    if (output_format) {
+        av_freep(&output_format);
+    }
+    if (stream_specifier) {
+        av_freep(&stream_specifier);
+    }
+    if (show_data_hash) {
+        av_freep(&show_data_hash);
+    }
+
+    /* Free read intervals */
+    if (read_intervals) {
+        av_freep(&read_intervals);
+    }
+    read_intervals_nb = 0;
+
+    /* Free stream arrays */
+    nb_streams = 0;
+    if (selected_streams) {
+        av_freep(&selected_streams);
+    }
+    if (streams_with_closed_captions) {
+        av_freep(&streams_with_closed_captions);
+    }
+    if (streams_with_film_grain) {
+        av_freep(&streams_with_film_grain);
+    }
+
+    /* Clear input filenames */
+    input_filename = NULL;
+    print_input_filename = NULL;
+
+    /* Reset log buffer */
+    log_buffer_size = 0;
+    if (log_buffer) {
+        av_freep(&log_buffer);
+    }
+
+    /* Call cmdutils cleanup */
+    uninit_opts();
 }
 `;
     ffprobeContent = ffprobeContent.replace(

@@ -563,4 +563,161 @@ mod tests {
             "Expected ffmpeg version info"
         );
     }
+
+    #[test]
+    fn test_dual_invocation() {
+        let lib_path = match get_test_lib_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping test: FFmpeg library not found");
+                return;
+            }
+        };
+
+        let args = vec!["-hide_banner".to_string(), "-bsfs".to_string()];
+        let result1 = run_ffmpeg_command(&lib_path, "ffprobe", args.clone());
+        assert!(result1.is_ok(), "First ffprobe call failed: {:?}", result1.err());
+
+        let result2 = run_ffmpeg_command(&lib_path, "ffprobe", args.clone());
+        assert!(result2.is_ok(), "Second ffprobe call failed: {:?}", result2.err());
+
+        let result3 = run_ffmpeg_command(&lib_path, "ffmpeg", vec!["-version".to_string()]);
+        assert!(result3.is_ok(), "First ffmpeg call failed: {:?}", result3.err());
+
+        let result4 = run_ffmpeg_command(&lib_path, "ffmpeg", vec!["-version".to_string()]);
+        assert!(result4.is_ok(), "Second ffmpeg call failed: {:?}", result4.err());
+
+        let result5 = run_ffmpeg_command(&lib_path, "ffprobe", args);
+        assert!(result5.is_ok(), "Third ffprobe call (after ffmpeg) failed: {:?}", result5.err());
+    }
+
+    #[test]
+    fn test_double_init_is_safe() {
+        let lib_path = match get_test_lib_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping test: FFmpeg library not found");
+                return;
+            }
+        };
+
+        unsafe {
+            let lib = FFmpegLibrary::load(&lib_path).expect("Failed to load library");
+
+            let init1 = (lib.init)();
+            assert_eq!(init1, 0, "First init should succeed");
+
+            let init2 = (lib.init)();
+            assert_eq!(init2, 0, "Second init should also return success (no-op)");
+
+            let init3 = (lib.init)();
+            assert_eq!(init3, 0, "Third init should also return success (no-op)");
+
+            (lib.cleanup)();
+            lib.unload();
+        }
+    }
+
+    #[test]
+    fn test_double_cleanup_is_safe() {
+        let lib_path = match get_test_lib_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping test: FFmpeg library not found");
+                return;
+            }
+        };
+
+        unsafe {
+            let lib = FFmpegLibrary::load(&lib_path).expect("Failed to load library");
+
+            let init_result = (lib.init)();
+            assert_eq!(init_result, 0, "Init should succeed");
+
+            (lib.cleanup)();
+            (lib.cleanup)();
+            (lib.cleanup)();
+
+            lib.unload();
+        }
+    }
+
+    #[test]
+    fn test_reinit_after_cleanup() {
+        let lib_path = match get_test_lib_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping test: FFmpeg library not found");
+                return;
+            }
+        };
+
+        unsafe {
+            let lib = FFmpegLibrary::load(&lib_path).expect("Failed to load library");
+
+            assert_eq!((lib.init)(), 0, "First init should succeed");
+            (lib.cleanup)();
+
+            assert_eq!((lib.init)(), 0, "Re-init after cleanup should succeed");
+
+            let version = (lib.version)();
+            assert!(!version.is_null(), "Version should be available after re-init");
+
+            (lib.cleanup)();
+            lib.unload();
+        }
+    }
+
+    #[test]
+    fn test_operations_work_after_reinit() {
+        let lib_path = match get_test_lib_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping test: FFmpeg library not found");
+                return;
+            }
+        };
+
+        let args = vec!["-hide_banner".to_string(), "-bsfs".to_string()];
+        
+        let result1 = run_ffmpeg_command(&lib_path, "ffprobe", args.clone());
+        assert!(result1.is_ok(), "First run should succeed");
+
+        let result2 = run_ffmpeg_command(&lib_path, "ffprobe", args.clone());
+        assert!(result2.is_ok(), "Second run (simulating reload) should succeed");
+
+        let result3 = run_ffmpeg_command(&lib_path, "ffprobe", args);
+        assert!(result3.is_ok(), "Third run should succeed");
+
+        assert_eq!(
+            result1.as_ref().unwrap().exit_code,
+            result2.as_ref().unwrap().exit_code,
+            "Exit codes should match between runs"
+        );
+        assert_eq!(
+            result2.as_ref().unwrap().exit_code,
+            result3.as_ref().unwrap().exit_code,
+            "Exit codes should match between runs"
+        );
+    }
+
+    #[test]
+    fn test_cleanup_without_init_is_safe() {
+        let lib_path = match get_test_lib_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping test: FFmpeg library not found");
+                return;
+            }
+        };
+
+        unsafe {
+            let lib = FFmpegLibrary::load(&lib_path).expect("Failed to load library");
+
+            (lib.cleanup)();
+            (lib.cleanup)();
+
+            lib.unload();
+        }
+    }
 }
