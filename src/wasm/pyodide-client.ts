@@ -302,10 +302,16 @@ export class PyodideClient {
       error?: string;
       command?: string;
       args?: Record<string, unknown>;
+      code?: string;
     };
 
     if (msg.type === 'tauri_invoke') {
       this.handleTauriInvoke(msg.id!, msg.command!, msg.args || {});
+      return;
+    }
+
+    if (msg.type === 'js_sandbox_execute') {
+      this.executeInSandbox(msg.id!, msg.code!);
       return;
     }
 
@@ -365,6 +371,86 @@ export class PyodideClient {
         error: error instanceof Error ? error.message : String(error)
       });
     }
+  }
+
+  private async executeInSandbox(id: string, code: string): Promise<void> {
+    if (!this.worker) return;
+
+    try {
+      const result = await this.runCodeInSandboxedIframe(code);
+      this.worker.postMessage({
+        type: 'js_sandbox_result',
+        id,
+        success: true,
+        result
+      });
+    } catch (error) {
+      this.worker.postMessage({
+        type: 'js_sandbox_result',
+        id,
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private runCodeInSandboxedIframe(code: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const transformedCode = code.split("await import('npm:").join("await import('https://esm.sh/");
+      
+      const iframe = document.createElement('iframe');
+      iframe.sandbox.add('allow-scripts');
+      iframe.style.display = 'none';
+      
+      const channel = new MessageChannel();
+      let resolved = false;
+      
+      const cleanup = () => {
+        if (document.body.contains(iframe)) {
+          iframe.remove();
+        }
+      };
+
+      channel.port1.onmessage = (e: MessageEvent) => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        if (e.data.error) {
+          reject(new Error(e.data.error));
+        } else {
+          resolve(e.data.result);
+        }
+      };
+
+      const readyHandler = (e: MessageEvent) => {
+        if (e.data?.type === 'sandbox_ready' && e.source === iframe.contentWindow) {
+          window.removeEventListener('message', readyHandler);
+          iframe.contentWindow?.postMessage(transformedCode, '*', [channel.port2]);
+        }
+      };
+      
+      window.addEventListener('message', readyHandler);
+
+      iframe.src = '/jsc-sandbox.html';
+      document.body.appendChild(iframe);
+
+      iframe.onerror = () => {
+        if (resolved) return;
+        resolved = true;
+        window.removeEventListener('message', readyHandler);
+        cleanup();
+        reject(new Error('Failed to load sandbox iframe'));
+      };
+
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          window.removeEventListener('message', readyHandler);
+          cleanup();
+          reject(new Error('Sandbox execution timed out'));
+        }
+      }, 60000);
+    });
   }
 
   onLog(handler: (log: LogMessage) => void): () => void {

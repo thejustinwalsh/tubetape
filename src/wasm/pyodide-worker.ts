@@ -454,16 +454,16 @@ function isHTTPRequestPending(id: string): boolean {
  */
 function triggerHTTPProcessing(): void {
   if (httpProcessingPromise) {
-    console.log('[pyodide-worker] HTTP processing already in progress');
+    if (verboseMode) console.log('[pyodide-worker] HTTP processing already in progress');
     return;
   }
   
-  console.log('[pyodide-worker] Scheduling HTTP queue processing...');
+  if (verboseMode) console.log('[pyodide-worker] Scheduling HTTP queue processing...');
   
   setTimeout(() => {
-    console.log('[pyodide-worker] Starting HTTP queue processing...');
+    if (verboseMode) console.log('[pyodide-worker] Starting HTTP queue processing...');
     httpProcessingPromise = processHTTPQueue().finally(() => {
-      console.log('[pyodide-worker] HTTP queue processing finished');
+      if (verboseMode) console.log('[pyodide-worker] HTTP queue processing finished');
       httpProcessingPromise = null;
     });
   }, 0);
@@ -480,7 +480,7 @@ async function processHTTPQueue(): Promise<void> {
     request.status = 'processing';
     request.lastActivity = Date.now();
     
-    console.log(`[pyodide-worker] Invoking Tauri http_request for ${request.id}: ${request.url.slice(0, 60)}...`);
+    if (verboseMode) console.log(`[pyodide-worker] Invoking Tauri http_request for ${request.id}: ${request.url.slice(0, 60)}...`);
     
     try {
       const response = await invokeTauri<{
@@ -750,6 +750,36 @@ function triggerJSChallengeProcessing(): void {
   });
 }
 
+async function executeJSInSandbox(code: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const requestId = `jsc_exec_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === 'js_sandbox_result' && event.data?.id === requestId) {
+        self.removeEventListener('message', handler);
+        if (event.data.success) {
+          resolve(event.data.result);
+        } else {
+          reject(new Error(event.data.error));
+        }
+      }
+    };
+    
+    self.addEventListener('message', handler);
+    
+    self.postMessage({
+      type: 'js_sandbox_execute',
+      id: requestId,
+      code: code
+    });
+    
+    setTimeout(() => {
+      self.removeEventListener('message', handler);
+      reject(new Error('JS sandbox execution timed out'));
+    }, 60000);
+  });
+}
+
 async function processJSChallengeQueue(): Promise<void> {
   const pending = Array.from(jsChallengeQueue.values()).filter(c => c.status === 'pending');
   
@@ -758,12 +788,21 @@ async function processJSChallengeQueue(): Promise<void> {
     challenge.lastActivity = Date.now();
     
     try {
-      console.log(`[pyodide-worker] Executing JS challenge ${challenge.id}...`);
-      const result = await invokeTauri<string>('execute_js_challenge', { code: challenge.code });
+      console.log(`[pyodide-worker] Executing JS challenge ${challenge.id} in sandbox...`);
+      const result = await executeJSInSandbox(challenge.code);
       
       challenge.status = 'completed';
       challenge.result = result;
-      console.log(`[pyodide-worker] JS challenge ${challenge.id} completed`);
+      
+      if (verboseMode) {
+        const lines = result.split('\n');
+        const lastLine = lines[lines.length - 1] || lines[lines.length - 2] || '';
+        const hasError = result.toLowerCase().includes('error') || result.toLowerCase().includes('exception');
+        console.log(`[JSC RESULT] Challenge ${challenge.id}:`);
+        console.log(`[JSC RESULT]   Total lines: ${lines.length}, Total chars: ${result.length}`);
+        console.log(`[JSC RESULT]   Last line (likely the actual result): "${lastLine.slice(0, 500)}"`);
+        console.log(`[JSC RESULT]   Contains error keywords: ${hasError}`);
+      }
     } catch (error) {
       challenge.status = 'error';
       challenge.error = error instanceof Error ? error.message : String(error);
@@ -880,7 +919,7 @@ async function executeQueuedFFmpegCommands(): Promise<FFmpegCommand[]> {
   for (const cmd of pendingCommands) {
     cmd.status = 'running';
     console.log(`[pyodide-worker] Executing ${cmd.command} command ${cmd.id}`);
-    console.log(`[pyodide-worker] FFmpeg args:`, cmd.args);
+    if (verboseMode) console.log(`[pyodide-worker] FFmpeg args:`, cmd.args);
     
     try {
       const result = await invokeTauri<{ exit_code: number; stdout: string; stderr: string }>(
@@ -889,8 +928,8 @@ async function executeQueuedFFmpegCommands(): Promise<FFmpegCommand[]> {
       );
       
       console.log(`[pyodide-worker] FFmpeg exit code: ${result.exit_code}`);
-      if (result.stdout) console.log(`[pyodide-worker] FFmpeg stdout:`, result.stdout.slice(0, 500));
-      if (result.stderr) console.log(`[pyodide-worker] FFmpeg stderr:`, result.stderr.slice(0, 1000));
+      if (verboseMode && result.stdout) console.log(`[pyodide-worker] FFmpeg stdout:`, result.stdout.slice(0, 500));
+      if (verboseMode && result.stderr) console.log(`[pyodide-worker] FFmpeg stderr:`, result.stderr.slice(0, 1000));
       
       cmd.status = result.exit_code === 0 ? 'completed' : 'error';
       cmd.result = result;
@@ -940,7 +979,7 @@ function nativeFFmpegAdapter(
     plainArgs = [];
   }
   
-  console.log(`[pyodide-worker] FFmpeg ${command} sync hijack:`, plainArgs.length, 'args');
+  if (verboseMode) console.log(`[pyodide-worker] FFmpeg ${command} sync hijack:`, plainArgs.length, 'args');
 
   if (command === 'ffprobe' && plainArgs.length > 0 && plainArgs[0] === '-bsfs') {
     const caps = ffmpegCapabilities || STATIC_FFMPEG_CAPABILITIES;
@@ -1300,7 +1339,7 @@ _utils.Popen.run = _patched_popen_run
 
 _jsc_cache = {}
 
-class _JSCNeeded(Exception):
+class _JSCNeeded(BaseException):
     def __init__(self, code, cache_key):
         self.code = code
         self.cache_key = cache_key
@@ -1746,6 +1785,10 @@ self.addEventListener('message', (event) => {
   
   if (data.type === 'tauri_response') {
     handleTauriResponse(data as TauriResponse);
+    return;
+  }
+  
+  if (data.type === 'js_sandbox_result') {
     return;
   }
   

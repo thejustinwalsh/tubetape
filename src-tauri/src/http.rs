@@ -46,12 +46,14 @@ pub async fn http_request(
         request = request.body(body_content);
     }
 
+    eprintln!("[http] Sending {} request to: {}...", method, &url[..url.len().min(80)]);
+    
     // Send request
     let response = request
         .send()
         .await
         .map_err(|e| {
-            eprintln!("[http] Request error details: {:?}", e);
+            eprintln!("[http] Request FAILED: {:?}", e);
             eprintln!("[http] Is timeout: {}", e.is_timeout());
             eprintln!("[http] Is connect: {}", e.is_connect());
             eprintln!("[http] Is request: {}", e.is_request());
@@ -60,6 +62,8 @@ pub async fn http_request(
             }
             format!("HTTP request failed: {}", e)
         })?;
+    
+    eprintln!("[http] Request succeeded with status: {}", response.status());
 
     let status = response.status().as_u16();
     
@@ -101,10 +105,17 @@ pub async fn download_to_file(
         request = request.header(&key, &value);
     }
 
+    eprintln!("[http] Starting download from: {}...", &url[..url.len().min(80)]);
+    
     let response = request
         .send()
         .await
-        .map_err(|e| format!("Download request failed: {}", e))?;
+        .map_err(|e| {
+            eprintln!("[http] Download connection failed: {}", e);
+            format!("Download request failed: {}", e)
+        })?;
+    
+    eprintln!("[http] Got response status: {}", response.status());
 
     if !response.status().is_success() {
         return Err(format!("Download failed with status: {}", response.status()));
