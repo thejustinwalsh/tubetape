@@ -1,11 +1,12 @@
 mod audio;
 mod binary;
-mod ffmpeg_dlopen;
+mod ffmpeg;
+mod ffmpeg_runtime;
+mod ffmpeg_shim;
 mod http;
 mod youtube;
 
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 use tauri::{ipc::Channel, Manager};
 
 #[derive(Clone, Serialize)]
@@ -262,36 +263,15 @@ pub struct CachedAudioInfo {
 
 #[tauri::command]
 async fn export_sample(
+    _app: tauri::AppHandle,
     source_path: String,
     output_path: String,
     start_time: f64,
     end_time: f64,
 ) -> Result<String, String> {
-    let duration = end_time - start_time;
-
-    let output = Command::new("ffmpeg")
-        .args([
-            "-y",
-            "-i",
-            &source_path,
-            "-ss",
-            &start_time.to_string(),
-            "-t",
-            &duration.to_string(),
-            "-acodec",
-            "libmp3lame",
-            "-q:a",
-            "2",
-            &output_path,
-        ])
-        .output()
-        .map_err(|e| format!("Failed to run ffmpeg: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("ffmpeg failed: {}", stderr));
-    }
-
+    let source = std::path::PathBuf::from(&source_path);
+    let output = std::path::PathBuf::from(&output_path);
+    ffmpeg_runtime::export_sample(&source, &output, start_time, end_time)?;
     Ok(output_path)
 }
 
@@ -363,6 +343,19 @@ pub fn run() {
         .manage(AppStatsState {
             system: Mutex::new(System::new_all()),
         })
+        .setup(|app| {
+            if let Some(lib_path) = binary::get_ffmpeg_library_path(app.handle()) {
+                println!("[tubetape] FFmpeg library found: {:?}", lib_path);
+                ffmpeg::set_library_path(lib_path.clone());
+                if let Some(lib_dir) = lib_path.parent() {
+                    ffmpeg_runtime::set_library_directory(lib_dir.to_path_buf());
+                }
+                binary::setup_ffmpeg_library_path(app.handle());
+            } else {
+                eprintln!("[tubetape] WARNING: FFmpeg library not found - audio export will fail");
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
@@ -376,11 +369,11 @@ pub fn run() {
             check_cached_audio,
             get_app_stats,
             binary::get_qjs_status,
+            binary::get_ffmpeg_status,
             http::http_request,
             http::download_to_file,
-            ffmpeg_dlopen::dlopen_ffmpeg,
-            ffmpeg_dlopen::ffprobe_capabilities,
-            ffmpeg_dlopen::execute_js_challenge,
+            ffmpeg::dlopen_ffmpeg,
+            ffmpeg::ffprobe_capabilities,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

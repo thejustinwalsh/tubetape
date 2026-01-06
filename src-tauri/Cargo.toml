@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+bindgen = "0.70"
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -33,4 +34,6 @@ symphonia = { version = "0.5", features = ["mp3", "aac", "ogg", "wav", "flac"] }
 dirs = "5"
 sysinfo = "0.30"
 libc = "0.2.178"
+libloading = "0.8"
+once_cell = "1.19"
 
