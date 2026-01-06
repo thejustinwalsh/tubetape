@@ -379,7 +379,13 @@ async function verifyExistingBundle(bundleDir: string, config: PyodideConfig): P
   }
 }
 
-async function bundleYtDlp(existingConfig: PyodideConfig | null, update: boolean) {
+async function handleClean() {
+  console.log(`🧹 Cleaning yt-dlp bundle...`);
+  await rm(BUNDLE_DIR, { recursive: true, force: true });
+  console.log(`   ✅ Bundle cleaned\n`);
+}
+
+async function bundleYtDlp(existingConfig: PyodideConfig | null, update: boolean, forceRebuild: boolean) {
   const pyodideVersion = existingConfig?.version ?? "0.27.4";
   let ytDlpVersion = existingConfig?.ytDlpVersion ?? "2025.10.22";
   
@@ -396,13 +402,14 @@ async function bundleYtDlp(existingConfig: PyodideConfig | null, update: boolean
   console.log(`   Pyodide version: ${pyodideVersion}`);
   console.log(`   yt-dlp version: ${ytDlpVersion}`);
   
-  if (await exists(BUNDLE_DIR) && existingConfig && !update) {
+  if (!forceRebuild && await exists(BUNDLE_DIR) && existingConfig && !update) {
     console.log(`\n   Bundle exists at: ${BUNDLE_DIR}`);
     
     const isValid = await verifyExistingBundle(BUNDLE_DIR, existingConfig);
     if (isValid) {
       const bundleSize = await $`du -sh ${BUNDLE_DIR}`.quiet();
       console.log(`   ✅ Bundle valid (${bundleSize.stdout.toString().split('\t')[0].trim()})`);
+      console.log(`\n✅ yt-dlp bundle already built. Use --clean to rebuild.\n`);
       return;
     }
     
@@ -489,6 +496,7 @@ Bundles minimal Pyodide runtime + yt-dlp wheel with integrity verification.
 
 Options:
   --update    Fetch latest yt-dlp version and update hashes in package.json
+  --clean     Remove existing bundle and rebuild from scratch
   --help      Show this help message
 
 Without --update:
@@ -505,10 +513,14 @@ With --update:
 }
 
 const shouldUpdate = args.includes("--update");
+const shouldClean = args.includes("--clean");
 
 try {
+  if (shouldClean) {
+    await handleClean();
+  }
   const config = await getConfig();
-  await bundleYtDlp(config, shouldUpdate);
+  await bundleYtDlp(config, shouldUpdate, shouldClean);
 } catch (error) {
   console.error(`❌ Error: ${error}`);
   process.exit(1);

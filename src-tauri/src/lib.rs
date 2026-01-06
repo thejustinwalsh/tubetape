@@ -346,11 +346,9 @@ pub fn run() {
         .setup(|app| {
             if let Some(lib_path) = binary::get_ffmpeg_library_path(app.handle()) {
                 println!("[tubetape] FFmpeg library found: {:?}", lib_path);
-                ffmpeg::set_library_path(lib_path.clone());
                 if let Some(lib_dir) = lib_path.parent() {
                     ffmpeg_runtime::set_library_directory(lib_dir.to_path_buf());
                 }
-                binary::setup_ffmpeg_library_path(app.handle());
             } else {
                 eprintln!("[tubetape] WARNING: FFmpeg library not found - audio export will fail");
             }

@@ -206,20 +206,20 @@ fn get_library_directory() -> Option<PathBuf> {
 #[cfg(target_os = "macos")]
 fn lib_names() -> (&'static str, &'static str, &'static str, &'static str) {
     (
-        "libavutil.60.dylib",
-        "libswresample.6.dylib",
-        "libavcodec.62.dylib",
-        "libavformat.62.dylib",
+        "libavutil.dylib",
+        "libswresample.dylib",
+        "libavcodec.dylib",
+        "libavformat.dylib",
     )
 }
 
 #[cfg(target_os = "linux")]
 fn lib_names() -> (&'static str, &'static str, &'static str, &'static str) {
     (
-        "libavutil.so.60",
-        "libswresample.so.6",
-        "libavcodec.so.62",
-        "libavformat.so.62",
+        "libavutil.so",
+        "libswresample.so",
+        "libavcodec.so",
+        "libavformat.so",
     )
 }
 
@@ -236,10 +236,10 @@ fn lib_names() -> (&'static str, &'static str, &'static str, &'static str) {
 #[cfg(target_os = "ios")]
 fn lib_names() -> (&'static str, &'static str, &'static str, &'static str) {
     (
-        "libavutil.60.dylib",
-        "libswresample.6.dylib",
-        "libavcodec.62.dylib",
-        "libavformat.62.dylib",
+        "libavutil.dylib",
+        "libswresample.dylib",
+        "libavcodec.dylib",
+        "libavformat.dylib",
     )
 }
 
@@ -677,9 +677,13 @@ pub fn export_sample(
 
         let streams =
             std::slice::from_raw_parts((*input_ctx).streams, (*input_ctx).nb_streams as usize);
-        let in_stream = *streams
-            .get(audio_stream_idx as usize)
-            .ok_or("Invalid stream")?;
+        let in_stream = match streams.get(audio_stream_idx as usize) {
+            Some(s) => *s,
+            None => {
+                (ff.avformat_close_input)(&mut input_ctx);
+                return Err("Invalid stream".to_string());
+            }
+        };
 
         let dec_ctx = (ff.avcodec_alloc_context3)(decoder);
         if dec_ctx.is_null() {
@@ -758,13 +762,10 @@ pub fn export_sample(
             AudioFormat::Wav => AVSampleFormat_AV_SAMPLE_FMT_S16 as i32,
         };
 
-        if ((*output_ctx).oformat as *const _ as *const u8) != std::ptr::null() {
-            let flags = std::ptr::read(
-                ((*output_ctx).oformat as *const u8).add(std::mem::size_of::<*const c_char>() * 3)
-                    as *const c_int,
-            );
-            if flags & 0x0040 != 0 {
-                (*enc_ctx).flags |= 1 << 22;
+        if !(*output_ctx).oformat.is_null() {
+            let oformat = &*(*output_ctx).oformat;
+            if oformat.flags & (AVFMT_GLOBALHEADER as c_int) != 0 {
+                (*enc_ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as c_int;
             }
         }
 
@@ -889,6 +890,9 @@ pub fn export_sample(
                 }
 
                 let encode_frame = if needs_resample {
+                    (*out_frame).format = (*enc_ctx).sample_fmt;
+                    (*out_frame).sample_rate = (*enc_ctx).sample_rate;
+                    (ff.av_channel_layout_copy)(&mut (*out_frame).ch_layout, &(*enc_ctx).ch_layout);
                     (*out_frame).nb_samples = (*frame).nb_samples;
                     (ff.av_frame_get_buffer)(out_frame, 0);
                     (ff.swr_convert)(

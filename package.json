@@ -5,7 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "bun run bundle:yt-dlp && tsc && vite build",
+    "build": "bun run build:yt-dlp && bun run build:ffmpeg && tsc && vite build",
+    "build:ffmpeg": "bun run scripts/setup-ffmpeg.ts",
+    "build:yt-dlp": "bun run scripts/setup-yt-dlp.ts",
+    "update": "bun run update:yt-dlp && bun run update:ffmpeg",
+    "update:yt-dlp": "bun run scripts/update-yt-dlp.ts --update",
+    "update:ffmpeg": "bun run scripts/update-ffmpeg.ts --update-all",
+    "clean": "bun run clean:yt-dlp && bun run clean:ffmpeg",
+    "clean:ffmpeg": "bun run scripts/setup-ffmpeg.ts --clean",
+    "clean:yt-dlp": "bun run scripts/setup-yt-dlp.ts --clean",
     "preview": "vite preview",
     "tauri": "tauri",
     "lint": "eslint",
@@ -19,9 +27,7 @@
     "test:coverage": "vitest run --coverage",
     "test:visual": "playwright test",
     "test:visual:update": "bun run ladle:build && playwright test -u",
-    "test:visual:report": "playwright show-report .ladle/playwright-report",
-    "bundle:yt-dlp": "bun run scripts/bundle-yt-dlp.ts",
-    "bundle:yt-dlp:update": "bun run scripts/bundle-yt-dlp.ts --update"
+    "test:visual:report": "playwright show-report .ladle/playwright-report"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -92,19 +98,16 @@
     ]
   },
   "binaryDeps": {
-    "deno": {
-      "type": "release",
-      "repo": "denoland/deno"
-    },
-    "quickjs": {
-      "type": "source",
-      "repo": "bellard/quickjs",
-      "sha": "de4d3927b8edff5fbfee1f69cfeef840844259e9"
-    },
     "ffmpeg": {
       "type": "source",
       "repo": "FFmpeg/FFmpeg",
       "sha": "649a4e98f40feceea6c6bd933040b6ba9583980e"
+    },
+    "lame": {
+      "type": "sourceforge",
+      "project": "lame",
+      "version": "3.100",
+      "md5": "83e260acbe4389b54fe08e0bdbf7cddb"
     }
   },
   "pyodideDeps": {
