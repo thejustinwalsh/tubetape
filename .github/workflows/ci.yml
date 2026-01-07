@@ -27,16 +27,34 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf nasm yasm libclang-dev
       
       - name: Install dependencies
         run: bun install
 
-      - name: Create ffmpeg binaries placeholder
-        run: mkdir -p src-tauri/binaries/ffmpeg && touch src-tauri/binaries/ffmpeg/.gitkeep
+      - name: Cache ffmpeg build
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/binaries/ffmpeg
+            src-tauri/vendor
+          key: ffmpeg-linux-${{ hashFiles('package.json') }}
 
-      - name: Build project
-        run: bun run build 
+      - name: Build FFmpeg
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        run: bun run build:ffmpeg
+
+      - name: Cache yt-dlp/pyodide bundle
+        id: cache-ytdlp
+        uses: actions/cache@v4
+        with:
+          path: public/pyodide
+          key: ytdlp-pyodide-${{ hashFiles('package.json', 'scripts/patches/**') }}
+
+      - name: Build yt-dlp bundle
+        if: steps.cache-ytdlp.outputs.cache-hit != 'true'
+        run: bun run build:yt-dlp
       
       - name: Type check with tsc
         run: bunx tsc --noEmit
