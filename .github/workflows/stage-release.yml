@@ -138,6 +138,29 @@ jobs:
             src-tauri/Cargo.toml
             CHANGELOG.md
 
+      - name: Merge release into staging (auto-resolve conflicts)
+        if: steps.version.outputs.needs_release == 'true'
+        run: |
+          BRANCH="${{ steps.branch.outputs.name }}"
+          
+          # Configure git for merge commit
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Fetch latest state of both branches
+          git fetch origin "$BRANCH" release
+          git checkout "$BRANCH"
+          
+          # Merge release into staging, accepting staging's version for conflicts
+          # -X ours = when conflicts occur, take OUR (staging) version automatically
+          if git merge origin/release -m "chore: sync with release branch" --no-edit -X ours; then
+            echo "Merge completed cleanly"
+          else
+            echo "Merge completed with auto-resolved conflicts"
+          fi
+          
+          git push origin "$BRANCH"
+
       - name: Create PR if none exists
         if: steps.version.outputs.needs_release == 'true' && steps.check_pr.outputs.pr_exists != 'true'
         env:

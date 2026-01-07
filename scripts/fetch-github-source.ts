@@ -166,7 +166,7 @@ if (import.meta.main) {
   const config: SourceConfig = {
     name,
     repo,
-    targetDir: `src-tauri/source/${name.toLowerCase()}`,
+    targetDir: `src-tauri/vendor/${name.toLowerCase()}`,
   };
   
   try {

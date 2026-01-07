@@ -16,5 +16,38 @@ export default defineConfig([
   ...tseslint.configs.recommended,
   reactHooks.configs.flat["recommended-latest"],
   ...compat.config(pluginReact.configs.recommended),
-  pluginReact.configs.flat['jsx-runtime']
+  pluginReact.configs.flat['jsx-runtime'],
+  {
+    // For JS files, allow unused variables if they start with '_'
+    files: ['**/*.{js,jsx}'],
+    rules: {
+      'no-unused-vars': [
+        'error',
+        {
+          vars: 'all',
+          args: 'after-used',
+          ignoreRestSiblings: true,
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+        },
+      ],
+    },
+  },
+  {
+    // For TS files, use @typescript-eslint/no-unused-vars to avoid false positives in interfaces
+    files: ['**/*.{ts,tsx}'],
+    rules: {
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          vars: 'all',
+          args: 'after-used',
+          ignoreRestSiblings: true,
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+        },
+      ],
+    },
+  },
 ]);

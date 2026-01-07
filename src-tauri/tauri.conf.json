@@ -4,9 +4,9 @@
   "version": "0.1.1",
   "identifier": "dev.tjw.tubetape",
   "build": {
-    "beforeDevCommand": "bun scripts/setup-qjs.ts && bun run dev",
+    "beforeDevCommand": "bun run build && bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "NODE_ENV=production bun scripts/setup-qjs.ts && bun run build",
+    "beforeBuildCommand": "NODE_ENV=production bun run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -36,7 +36,7 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "binaries/qjs/*"
+      "binaries/ffmpeg/*"
     ]
   }
 }
