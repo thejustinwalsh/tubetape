@@ -1644,13 +1644,18 @@ async function extractInfo(url: string): Promise<unknown> {
     throw new Error('Pyodide not initialized');
   }
 
+  const parsedUrl = URL.parse(url);
+  if (!parsedUrl) {
+    throw new Error('Invalid URL');
+  }
+
   console.log('[pyodide-worker] Extracting info for:', url);
   clearCompletedCommands();
 
-  const escapedUrl = url.replace(/'/g, "\\'");
+  const escapedUrl = JSON.stringify(parsedUrl.href);
 
   const result = await pyodide!.runPythonAsync(/*py*/`
-result = await extract_info_async('${escapedUrl}')
+result = await extract_info_async(${escapedUrl})
 result
 `);
 
@@ -1658,11 +1663,16 @@ result
 }
 
 async function extractAudio(
-  url: string, 
+  url: string,
   outputPath: string
 ): Promise<{ info: unknown; ffmpegCommands: FFmpegCommand[] }> {
   if (!pyodide || !isInitialized) {
     throw new Error('Pyodide not initialized');
+  }
+
+  const parsedUrl = URL.parse(url);
+  if (!parsedUrl) {
+    throw new Error('Invalid URL');
   }
 
   console.log('[pyodide-worker] Extracting audio for:', url);
@@ -1670,11 +1680,11 @@ async function extractAudio(
 
   clearCompletedCommands();
 
-  const escapedUrl = url.replace(/'/g, "\\'");
-  const escapedOutput = outputPath.replace(/'/g, "\\'");
+  const escapedUrl = JSON.stringify(parsedUrl.href);
+  const escapedOutput = JSON.stringify(outputPath);
 
   const result = await pyodide!.runPythonAsync(/*py*/`
-result = await extract_audio_async('${escapedUrl}', '${escapedOutput}')
+result = await extract_audio_async(${escapedUrl}, ${escapedOutput})
 result
 `);
 
