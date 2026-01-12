@@ -496,6 +496,10 @@ impl AudioFile {
                 return Err("No audio stream found".to_string());
             }
 
+            if (*format_ctx).streams.is_null() {
+                (ff.avformat_close_input)(&mut format_ctx);
+                return Err("Format context has null streams".to_string());
+            }
             let streams = std::slice::from_raw_parts(
                 (*format_ctx).streams,
                 (*format_ctx).nb_streams as usize,
@@ -675,6 +679,10 @@ pub fn export_sample(
             return Err("No audio stream found".to_string());
         }
 
+        if (*input_ctx).streams.is_null() {
+            (ff.avformat_close_input)(&mut input_ctx);
+            return Err("Input context has null streams".to_string());
+        }
         let streams =
             std::slice::from_raw_parts((*input_ctx).streams, (*input_ctx).nb_streams as usize);
         let in_stream = match streams.get(audio_stream_idx as usize) {

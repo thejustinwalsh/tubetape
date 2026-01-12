@@ -312,6 +312,10 @@ fn remux_audio_copy(
             return Err("No audio stream found".to_string());
         }
 
+        if (*input_ctx).streams.is_null() {
+            (ff.avformat_close_input)(&mut input_ctx);
+            return Err("Input context has null streams".to_string());
+        }
         let in_streams =
             std::slice::from_raw_parts((*input_ctx).streams, (*input_ctx).nb_streams as usize);
         let in_stream = *in_streams.get(audio_idx as usize).ok_or("Invalid stream")?;
