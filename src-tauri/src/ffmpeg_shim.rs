@@ -291,7 +291,7 @@ fn remux_audio_copy(
             std::ptr::null(),
             std::ptr::null_mut(),
         );
-        if ret < 0 {
+        if ret < 0 || input_ctx.is_null() {
             return Err(format!("Failed to open input: {}", av_error_string(ret)));
         }
 
@@ -319,6 +319,10 @@ fn remux_audio_copy(
         let in_streams =
             std::slice::from_raw_parts((*input_ctx).streams, (*input_ctx).nb_streams as usize);
         let in_stream = *in_streams.get(audio_idx as usize).ok_or("Invalid stream")?;
+        if in_stream.is_null() {
+            (ff.avformat_close_input)(&mut input_ctx);
+            return Err("Input stream pointer is null".to_string());
+        }
 
         let duration_secs = if (*in_stream).duration != AV_NOPTS_VALUE {
             (*in_stream).duration as f64 * (*in_stream).time_base.num as f64
@@ -398,6 +402,12 @@ fn remux_audio_copy(
         }
 
         let packet = (ff.av_packet_alloc)();
+        if packet.is_null() {
+            (ff.avio_closep)(&mut (*output_ctx).pb);
+            (ff.avformat_free_context)(output_ctx);
+            (ff.avformat_close_input)(&mut input_ctx);
+            return Err("Failed to allocate packet".to_string());
+        }
         let mut total_size: u64 = 0;
 
         while (ff.av_read_frame)(input_ctx, packet) >= 0 {

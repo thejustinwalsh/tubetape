@@ -475,7 +475,7 @@ impl AudioFile {
                 std::ptr::null(),
                 std::ptr::null_mut(),
             );
-            if ret < 0 {
+            if ret < 0 || format_ctx.is_null() {
                 return Err(format!("Failed to open file: {}", av_error_string(ret)));
             }
 
@@ -507,6 +507,10 @@ impl AudioFile {
             let stream = *streams
                 .get(stream_index as usize)
                 .ok_or("Invalid stream index")?;
+            if stream.is_null() {
+                (ff.avformat_close_input)(&mut format_ctx);
+                return Err("Stream pointer is null".to_string());
+            }
             let codecpar = (*stream).codecpar;
 
             let codec_ctx = (ff.avcodec_alloc_context3)(decoder);
@@ -658,7 +662,7 @@ pub fn export_sample(
             std::ptr::null(),
             std::ptr::null_mut(),
         );
-        if ret < 0 {
+        if ret < 0 || input_ctx.is_null() {
             return Err(format!("Failed to open input: {}", av_error_string(ret)));
         }
 
@@ -692,6 +696,10 @@ pub fn export_sample(
                 return Err("Invalid stream".to_string());
             }
         };
+        if in_stream.is_null() {
+            (ff.avformat_close_input)(&mut input_ctx);
+            return Err("Input stream pointer is null".to_string());
+        }
 
         let dec_ctx = (ff.avcodec_alloc_context3)(decoder);
         if dec_ctx.is_null() {
@@ -830,7 +838,24 @@ pub fn export_sample(
         (ff.avcodec_flush_buffers)(dec_ctx);
 
         let packet = (ff.av_packet_alloc)();
+        if packet.is_null() {
+            (ff.avio_closep)(&mut (*output_ctx).pb);
+            (ff.avcodec_free_context)(&mut (enc_ctx as *mut _));
+            (ff.avformat_free_context)(output_ctx);
+            (ff.avcodec_free_context)(&mut (dec_ctx as *mut _));
+            (ff.avformat_close_input)(&mut input_ctx);
+            return Err("Failed to allocate packet".to_string());
+        }
         let frame = (ff.av_frame_alloc)();
+        if frame.is_null() {
+            (ff.av_packet_free)(&mut (packet as *mut _));
+            (ff.avio_closep)(&mut (*output_ctx).pb);
+            (ff.avcodec_free_context)(&mut (enc_ctx as *mut _));
+            (ff.avformat_free_context)(output_ctx);
+            (ff.avcodec_free_context)(&mut (dec_ctx as *mut _));
+            (ff.avformat_close_input)(&mut input_ctx);
+            return Err("Failed to allocate frame".to_string());
+        }
         let mut samples_written: i64 = 0;
         let max_samples = (duration * (*enc_ctx).sample_rate as f64) as i64;
 
@@ -864,6 +889,19 @@ pub fn export_sample(
         }
 
         let out_frame = (ff.av_frame_alloc)();
+        if out_frame.is_null() {
+            if !swr_ctx.is_null() {
+                (ff.swr_free)(&mut swr_ctx);
+            }
+            (ff.av_frame_free)(&mut (frame as *mut _));
+            (ff.av_packet_free)(&mut (packet as *mut _));
+            (ff.avio_closep)(&mut (*output_ctx).pb);
+            (ff.avcodec_free_context)(&mut (enc_ctx as *mut _));
+            (ff.avformat_free_context)(output_ctx);
+            (ff.avcodec_free_context)(&mut (dec_ctx as *mut _));
+            (ff.avformat_close_input)(&mut input_ctx);
+            return Err("Failed to allocate output frame".to_string());
+        }
         (*out_frame).format = (*enc_ctx).sample_fmt;
         (*out_frame).sample_rate = (*enc_ctx).sample_rate;
         (ff.av_channel_layout_copy)(&mut (*out_frame).ch_layout, &(*enc_ctx).ch_layout);
