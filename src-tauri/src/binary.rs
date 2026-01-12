@@ -1,6 +1,17 @@
 use std::path::PathBuf;
 use tauri::Manager;
 
+#[cfg(target_os = "macos")]
+const FFMPEG_LIB_NAME: &str = "libavformat.dylib";
+#[cfg(target_os = "linux")]
+const FFMPEG_LIB_NAME: &str = "libavformat.so";
+#[cfg(target_os = "windows")]
+const FFMPEG_LIB_NAME: &str = "avformat.dll";
+
+pub fn get_ffmpeg_library_path(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
+    get_bundled_library_path(app_handle, "ffmpeg", FFMPEG_LIB_NAME)
+}
+
 pub fn get_bundled_binary_path(
     app_handle: &tauri::AppHandle,
     binary_dir: &str,
@@ -70,6 +81,58 @@ pub fn get_bundled_qjs_path(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
     get_bundled_binary_path(app_handle, "qjs", "qjs")
 }
 
+pub fn get_bundled_library_path(
+    app_handle: &tauri::AppHandle,
+    lib_dir: &str,
+    lib_name: &str,
+) -> Option<PathBuf> {
+    if let Ok(resource_dir) = app_handle.path().resource_dir() {
+        let lib_path = resource_dir
+            .join("binaries")
+            .join(lib_dir)
+            .join(lib_name);
+        if lib_path.exists() {
+            eprintln!("[tubetape] Found bundled {} at: {:?}", lib_name, lib_path);
+            return Some(lib_path);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        if let Ok(app_dir) = app_handle.path().app_data_dir() {
+            if let Some(parent) = app_dir.parent() {
+                if let Some(project_root) = parent.parent() {
+                    let dev_path = project_root
+                        .join("src-tauri")
+                        .join("binaries")
+                        .join(lib_dir)
+                        .join(lib_name);
+                    if dev_path.exists() {
+                        let canonical = std::fs::canonicalize(&dev_path).unwrap_or(dev_path);
+                        eprintln!("[tubetape] Found dev {} at: {:?}", lib_name, canonical);
+                        return Some(canonical);
+                    }
+                }
+            }
+        }
+
+        let cwd_path = std::env::current_dir()
+            .ok()?
+            .join("src-tauri")
+            .join("binaries")
+            .join(lib_dir)
+            .join(lib_name);
+        if cwd_path.exists() {
+            let canonical = std::fs::canonicalize(&cwd_path).unwrap_or(cwd_path);
+            eprintln!("[tubetape] Found dev {} via cwd: {:?}", lib_name, canonical);
+            return Some(canonical);
+        }
+    }
+
+    eprintln!("[tubetape] No {} library found", lib_name);
+    None
+}
+
 pub async fn ensure_qjs_binary(app_handle: tauri::AppHandle) -> Result<PathBuf, String> {
     get_bundled_qjs_path(&app_handle).ok_or_else(|| {
         "QuickJS binary is missing. Expected a bundled qjs executable in the application's \
@@ -86,4 +149,22 @@ pub async fn get_qjs_status(app_handle: tauri::AppHandle) -> Result<String, Stri
     } else {
         Ok("not found".to_string())
     }
+}
+
+#[tauri::command]
+pub async fn get_ffmpeg_status(app_handle: tauri::AppHandle) -> Result<String, String> {
+    let mut status = Vec::new();
+
+    if let Some(lib_path) = get_ffmpeg_library_path(&app_handle) {
+        status.push(format!("bundled_library: {}", lib_path.display()));
+        if lib_path.exists() {
+            status.push("bundled_exists: true".to_string());
+        } else {
+            status.push("bundled_exists: false".to_string());
+        }
+    } else {
+        status.push("bundled_library: not found".to_string());
+    }
+
+    Ok(status.join("\n"))
 }

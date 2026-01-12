@@ -1,9 +1,12 @@
 mod audio;
 mod binary;
+mod ffmpeg;
+mod ffmpeg_runtime;
+mod ffmpeg_shim;
+mod http;
 mod youtube;
 
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 use tauri::{ipc::Channel, Manager};
 
 #[derive(Clone, Serialize)]
@@ -178,24 +181,76 @@ async fn get_waveform(audio_path: String) -> Result<WaveformData, String> {
     audio::generate_waveform_peaks(&path, |_, _| {})
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase", tag = "event", content = "data")]
+pub enum WaveformEvent {
+    Started { audio_path: String },
+    AudioInfo { sample_rate: u32, duration_secs: f64 },
+    Progress { total_peaks: usize },
+    Chunk { peaks: Vec<f32>, offset: usize },
+    Completed { peaks: Vec<f32>, duration_secs: f64 },
+    Error { message: String },
+}
+
+#[tauri::command]
+async fn generate_waveform_stream(
+    audio_path: String,
+    on_event: Channel<WaveformEvent>,
+) -> Result<WaveformData, String> {
+    let path = std::path::PathBuf::from(&audio_path);
+    
+    let _ = on_event.send(WaveformEvent::Started {
+        audio_path: audio_path.clone(),
+    });
+
+    let (duration_secs, sample_rate) = audio::get_audio_info(&path)?;
+    let expected_peaks = audio::estimate_peak_count(duration_secs, sample_rate);
+
+    let _ = on_event.send(WaveformEvent::AudioInfo {
+        sample_rate,
+        duration_secs,
+    });
+    
+    let _ = on_event.send(WaveformEvent::Progress {
+        total_peaks: expected_peaks,
+    });
+
+    let on_event_clone = on_event.clone();
+    let waveform = audio::generate_waveform_peaks(&path, move |peaks, offset| {
+        let _ = on_event_clone.send(WaveformEvent::Chunk {
+            peaks: peaks.to_vec(),
+            offset,
+        });
+    })?;
+
+    let _ = on_event.send(WaveformEvent::Completed {
+        peaks: waveform.peaks.clone(),
+        duration_secs: waveform.duration_secs,
+    });
+
+    Ok(waveform)
+}
+
 #[tauri::command]
 async fn check_cached_audio(
     app: tauri::AppHandle,
     video_id: String,
 ) -> Result<Option<CachedAudioInfo>, String> {
     let output_dir = get_audio_output_dir(&app)?;
-    let audio_path = output_dir.join(format!("{}.mp3", video_id));
-
-    if audio_path.exists() {
-        let (duration_secs, sample_rate) = audio::get_audio_info(&audio_path)?;
-        Ok(Some(CachedAudioInfo {
-            audio_path: audio_path.to_string_lossy().to_string(),
-            duration_secs,
-            sample_rate,
-        }))
-    } else {
-        Ok(None)
+    
+    for ext in ["aac", "m4a", "mp3"] {
+        let audio_path = output_dir.join(format!("{}.{}", video_id, ext));
+        if audio_path.exists() {
+            let (duration_secs, sample_rate) = audio::get_audio_info(&audio_path)?;
+            return Ok(Some(CachedAudioInfo {
+                audio_path: audio_path.to_string_lossy().to_string(),
+                duration_secs,
+                sample_rate,
+            }));
+        }
     }
+    
+    Ok(None)
 }
 
 #[derive(Clone, Serialize)]
@@ -208,36 +263,15 @@ pub struct CachedAudioInfo {
 
 #[tauri::command]
 async fn export_sample(
+    _app: tauri::AppHandle,
     source_path: String,
     output_path: String,
     start_time: f64,
     end_time: f64,
 ) -> Result<String, String> {
-    let duration = end_time - start_time;
-
-    let output = Command::new("ffmpeg")
-        .args([
-            "-y",
-            "-i",
-            &source_path,
-            "-ss",
-            &start_time.to_string(),
-            "-t",
-            &duration.to_string(),
-            "-acodec",
-            "libmp3lame",
-            "-q:a",
-            "2",
-            &output_path,
-        ])
-        .output()
-        .map_err(|e| format!("Failed to run ffmpeg: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("ffmpeg failed: {}", stderr));
-    }
-
+    let source = std::path::PathBuf::from(&source_path);
+    let output = std::path::PathBuf::from(&output_path);
+    ffmpeg_runtime::export_sample(&source, &output, start_time, end_time)?;
     Ok(output_path)
 }
 
@@ -309,6 +343,17 @@ pub fn run() {
         .manage(AppStatsState {
             system: Mutex::new(System::new_all()),
         })
+        .setup(|app| {
+            if let Some(lib_path) = binary::get_ffmpeg_library_path(app.handle()) {
+                println!("[tubetape] FFmpeg library found: {:?}", lib_path);
+                if let Some(lib_dir) = lib_path.parent() {
+                    ffmpeg_runtime::set_library_directory(lib_dir.to_path_buf());
+                }
+            } else {
+                eprintln!("[tubetape] WARNING: FFmpeg library not found - audio export will fail");
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
@@ -317,10 +362,16 @@ pub fn run() {
             fetch_video_metadata,
             extract_audio,
             get_waveform,
+            generate_waveform_stream,
             export_sample,
             check_cached_audio,
             get_app_stats,
             binary::get_qjs_status,
+            binary::get_ffmpeg_status,
+            http::http_request,
+            http::download_to_file,
+            ffmpeg::dlopen_ffmpeg,
+            ffmpeg::ffprobe_capabilities,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

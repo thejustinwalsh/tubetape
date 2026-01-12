@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
+import { appDataDir, join } from "@tauri-apps/api/path";
 import "./App.css";
 
 import ProjectCombobox from "./components/ProjectCombobox";
@@ -9,12 +10,27 @@ import VideoUnfurl from "./components/VideoUnfurl";
 import Waveform from "./components/Waveform";
 import SampleWaveform from "./components/SampleWaveform";
 import { getDatabase, generateSampleId, type SampleDocType, type TubetapeDatabase } from "./lib/db";
-import type { VideoMetadata, ExtractionEvent, AppState, Project, CachedAudioInfo, AudioInfo } from "./types";
+import type { VideoMetadata, AppState, Project, CachedAudioInfo, AudioInfo } from "./types";
 import { useAppStats } from "./hooks/useAppStats";
+import { usePyodide } from "./hooks/usePyodide";
+
+interface WaveformEvent {
+  event: "started" | "audioInfo" | "progress" | "chunk" | "completed" | "error";
+  data: {
+    audio_path?: string;
+    sample_rate?: number;
+    duration_secs?: number;
+    total_peaks?: number;
+    peaks?: number[];
+    offset?: number;
+    message?: string;
+  };
+}
 
 function App() {
   const [appState, setAppState] = useState<AppState>("idle");
   const { stats, refetch: refetchStats } = useAppStats();
+  const pyodide = usePyodide();
   const [metadata, setMetadata] = useState<VideoMetadata | null>(null);
   const [progress, setProgress] = useState<{ percent: number; status: string } | null>(null);
   const [audioPath, setAudioPath] = useState<string | null>(null);
@@ -83,60 +99,101 @@ function App() {
       const videoMetadata = await invoke<VideoMetadata>("fetch_video_metadata", { url });
       setMetadata(videoMetadata);
       setAppState("extracting");
-      setProgress({ percent: 0, status: "Starting..." });
 
-      const channel = new Channel<ExtractionEvent>();
+      if (pyodide.status === 'idle' || pyodide.status === 'error') {
+        setProgress({ percent: 0, status: "Initializing Pyodide..." });
+        await pyodide.initialize();
+      }
+
+      setProgress({ percent: 0, status: "Starting download..." });
+
+      const dataDir = await appDataDir();
+      const outputPath = await join(dataDir, "audio", `${videoMetadata.videoId}.aac`);
+
+      await pyodide.extractAudio(url, outputPath, {
+        onProgress: (extractProgress) => {
+          switch (extractProgress.phase) {
+            case 'initializing':
+              setProgress({ percent: 0, status: "Initializing..." });
+              break;
+            case 'extracting_info':
+              setProgress({ percent: 5, status: "Getting video info..." });
+              break;
+            case 'downloading':
+              setProgress({ percent: Math.min(50, 10 + extractProgress.percent * 0.4), status: extractProgress.message });
+              break;
+            case 'converting':
+              setProgress({ percent: Math.min(80, 50 + extractProgress.percent * 0.3), status: extractProgress.message });
+              break;
+            case 'completed':
+              setProgress({ percent: 80, status: "Extraction complete" });
+              break;
+            case 'error':
+              setError(extractProgress.message);
+              setAppState("error");
+              break;
+          }
+        },
+        onDownloadProgress: (downloadProgress) => {
+          setProgress({ 
+            percent: Math.min(50, 10 + downloadProgress.percent * 0.4), 
+            status: `Downloading: ${downloadProgress.percent.toFixed(1)}% at ${downloadProgress.speed}` 
+          });
+        }
+      });
+
+      setProgress({ percent: 85, status: "Generating waveform..." });
+
+      const waveformChannel = new Channel<WaveformEvent>();
       let totalPeaks = 0;
       let peaksProcessed = 0;
       let audioSampleRate: number | null = null;
+      let audioDuration: number | null = null;
 
-      channel.onmessage = (event) => {
+      waveformChannel.onmessage = (event) => {
         switch (event.event) {
           case "started":
-            setProgress({ percent: 0, status: "Downloading..." });
-            break;
-          case "progress":
-            setProgress({ percent: event.data.percent, status: event.data.status });
+            setProgress({ percent: 85, status: "Starting waveform..." });
             break;
           case "audioInfo":
-            audioSampleRate = event.data.sample_rate;
+            audioSampleRate = event.data.sample_rate ?? null;
+            audioDuration = event.data.duration_secs ?? null;
             break;
-          case "waveformProgress":
-            totalPeaks = event.data.total_peaks;
+          case "progress":
+            totalPeaks = event.data.total_peaks ?? 0;
             peaksProcessed = 0;
-            setProgress({ percent: 0, status: "Generating waveform..." });
             break;
-          case "waveformChunk": {
-            // Track peaks as they come in
-            peaksProcessed += event.data.peaks.length;
-            const percent = totalPeaks > 0 ? Math.min(98, (peaksProcessed / totalPeaks) * 100) : 0;
+          case "chunk": {
+            peaksProcessed += event.data.peaks?.length ?? 0;
+            const percent = totalPeaks > 0 ? Math.min(98, 85 + (peaksProcessed / totalPeaks) * 15) : 85;
             setProgress({ percent, status: "Generating waveform..." });
           } break;
           case "completed":
-            setAudioPath(event.data.audio_path);
-            setDuration(event.data.duration_secs);
+            setAudioPath(outputPath);
+            setDuration(audioDuration ?? event.data.duration_secs ?? 0);
             setAudioInfo({
-              sampleRate: audioSampleRate || 44100,
-              durationSecs: event.data.duration_secs,
+              sampleRate: audioSampleRate ?? 44100,
+              durationSecs: audioDuration ?? event.data.duration_secs ?? 0,
             });
             setProgress(null);
             setAppState("ready");
             refetchStats();
             break;
           case "error":
-            setError(event.data.message);
+            setError(event.data.message ?? "Waveform generation failed");
             setAppState("error");
             break;
         }
       };
 
-      await invoke("extract_audio", { url, onEvent: channel });
+      await invoke("generate_waveform_stream", { audioPath: outputPath, onEvent: waveformChannel });
     } catch (err) {
+      console.error('[App] Extraction failed:', err);
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(errorMessage);
       setAppState("error");
     }
-  }, [refetchStats]);
+  }, [refetchStats, pyodide]);
 
   const handleReset = useCallback(() => {
     setAppState("idle");
@@ -188,6 +245,7 @@ function App() {
         setCurrentProject(project);
       }
     } catch (err) {
+      console.error('[App] Project load failed:', err);
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(errorMessage);
       setAppState("error");

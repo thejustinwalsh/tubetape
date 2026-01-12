@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob: https://esm.sh; connect-src https://esm.sh;">
+</head>
+<body>
+<script type="module">
+window.addEventListener('message', async (e) => {
+  if (e.source !== window.parent) return;
+  
+  const port = e.ports[0];
+  if (!port) return;
+  
+  const code = e.data;
+  const logs = [];
+  
+  const capture = (...args) => logs.push(args.map(String).join(' '));
+  console.log = capture;
+  console.warn = capture;
+  console.error = capture;
+  
+  let url;
+  try {
+    const blob = new Blob([code], { type: 'text/javascript' });
+    url = URL.createObjectURL(blob);
+    await import(url);
+    port.postMessage({ result: logs.join('\n') });
+  } catch (err) {
+    port.postMessage({ error: err.message || String(err) });
+  } finally {
+    if (url) URL.revokeObjectURL(url);
+  }
+});
+
+window.parent.postMessage({ type: 'sandbox_ready' }, '*');
+</script>
+</body>
+</html>
