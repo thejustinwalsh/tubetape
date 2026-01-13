@@ -1,43 +1,35 @@
-export interface VideoMetadata {
-  title: string;
-  authorName: string;
-  authorUrl: string;
-  thumbnailUrl: string;
-  videoId: string;
-}
+// Re-export Rust types from auto-generated bindings
+export type {
+  VideoMetadata,
+  BeatInfo,
+  WaveformData,
+  CachedAudioInfo,
+  ExtractionEvent,
+  PipelineEvent,
+  PipelineCommand,
+  PipelineResult,
+  StageProgress,
+  FFmpegCommand,
+  StageName as PipelineStageName,
+} from "./bindings";
 
-export type ExtractionEvent =
-  | { event: "started"; data: { video_id: string } }
-  | { event: "progress"; data: { percent: number; status: string } }
-  | { event: "audioInfo"; data: { sample_rate: number } }
-  | { event: "waveformProgress"; data: { total_peaks: number } }
-  | { event: "waveformChunk"; data: { peaks: number[]; offset: number } }
-  | { event: "completed"; data: { audio_path: string; duration_secs: number } }
-  | { event: "error"; data: { message: string } };
+// Frontend-only types (not from Rust)
 
+/** UI state machine */
+export type AppState = "idle" | "loading-metadata" | "extracting" | "ready" | "error";
+
+/** Audio info subset used by components */
 export interface AudioInfo {
   sampleRate: number;
   durationSecs: number;
 }
 
-export interface WaveformData {
-  peaks: number[];
-  durationSecs: number;
-  sampleRate: number;
-}
-
-export type AppState = "idle" | "loading-metadata" | "extracting" | "ready" | "error";
-
-export interface CachedAudioInfo {
-  audioPath: string;
-  durationSecs: number;
-  sampleRate: number;
-}
-
+/** Frontend project data model */
 export interface Project {
   videoId: string;
   title: string;
   audioPath: string;
   authorName: string;
   authorUrl: string;
+  beatInfo?: import("./bindings").BeatInfo;
 }

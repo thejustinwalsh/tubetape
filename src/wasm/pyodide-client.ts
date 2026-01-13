@@ -9,15 +9,14 @@
  * 2. FFmpeg phase: Execute queued commands on native side with progress reporting
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { Channel } from '@tauri-apps/api/core';
+import { commands, type DownloadProgress as RustDownloadProgress } from '../bindings';
 
 interface WorkerMessage {
   id: string;
   type: 'init' | 'extract_info' | 'extract_audio' | 'execute_ffmpeg' | 'get_ffmpeg_queue' | 'set_verbose';
   payload?: unknown;
 }
-
-
 
 export type LogLevel = 'debug' | 'info' | 'warning' | 'error' | 'progress';
 
@@ -49,7 +48,7 @@ export interface FFmpegCommand {
   inputPath?: string;
   outputPath?: string;
   status: 'pending' | 'running' | 'completed' | 'error';
-  result?: { exit_code: number; stdout: string; stderr: string };
+  result?: { exitCode: number; stdout: string; stderr: string };
   error?: string;
 }
 
@@ -354,9 +353,47 @@ export class PyodideClient {
 
   private async handleTauriInvoke(id: string, command: string, args: Record<string, unknown>): Promise<void> {
     if (!this.worker) return;
-    
+
     try {
-      const result = await invoke(command, args);
+      // Intercept download_to_file to use progress-enabled version
+      if (command === 'download_to_file') {
+        await this.handleDownloadWithProgress(id, args);
+        return;
+      }
+
+      // Use typed commands for type safety
+      let result: unknown;
+      switch (command) {
+        case 'http_request': {
+          const httpResult = await commands.httpRequest(
+            args.url as string,
+            args.method as string,
+            args.headers as Record<string, string>,
+            args.body as string | null
+          );
+          if (httpResult.status === 'error') throw new Error(httpResult.error);
+          result = httpResult.data;
+          break;
+        }
+        case 'dlopen_ffmpeg': {
+          const ffmpegResult = await commands.dlopenFfmpeg(
+            args.command as string,
+            args.args as string[]
+          );
+          if (ffmpegResult.status === 'error') throw new Error(ffmpegResult.error);
+          result = ffmpegResult.data;
+          break;
+        }
+        case 'ffprobe_capabilities': {
+          const capsResult = await commands.ffprobeCapabilities();
+          if (capsResult.status === 'error') throw new Error(capsResult.error);
+          result = capsResult.data;
+          break;
+        }
+        default:
+          throw new Error(`Unknown command: ${command}`);
+      }
+
       this.worker.postMessage({
         type: 'tauri_response',
         id,
@@ -365,6 +402,63 @@ export class PyodideClient {
       });
     } catch (error) {
       this.worker.postMessage({
+        type: 'tauri_response',
+        id,
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Handle download with progress reporting.
+   * Creates a Tauri channel for progress and forwards events to the worker.
+   */
+  private async handleDownloadWithProgress(id: string, args: Record<string, unknown>): Promise<void> {
+    if (!this.worker) return;
+
+    // Create progress channel (receives RustDownloadProgress from Rust)
+    const progressChannel = new Channel<RustDownloadProgress>();
+
+    progressChannel.onmessage = (progress: RustDownloadProgress) => {
+      // Forward progress to worker (which will postMessage to listeners)
+      this.worker?.postMessage({
+        type: 'downloadProgress',
+        data: progress
+      });
+
+      // Also notify any direct listeners (convert to DownloadProgress format)
+      for (const listener of this.progressListeners) {
+        listener({
+          percent: progress.percent,
+          downloaded: `${(progress.bytesDownloaded / 1_000_000).toFixed(1)} MB`,
+          total: progress.totalBytes ? `${(progress.totalBytes / 1_000_000).toFixed(1)} MB` : 'unknown',
+          speed: '',
+          eta: ''
+        });
+      }
+    };
+
+    try {
+      const result = await commands.downloadToFileWithProgress(
+        args.url as string,
+        args.outputPath as string,
+        (args.headers || {}) as Record<string, string>,
+        progressChannel
+      );
+
+      if (result.status === 'error') {
+        throw new Error(result.error);
+      }
+
+      this.worker?.postMessage({
+        type: 'tauri_response',
+        id,
+        success: true,
+        data: null
+      });
+    } catch (error) {
+      this.worker?.postMessage({
         type: 'tauri_response',
         id,
         success: false,

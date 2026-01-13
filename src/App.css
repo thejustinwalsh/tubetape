@@ -117,6 +117,25 @@ html, body {
 }
 
 .logo.tauri:hover {
-  filter: drop-shadow(0 0 1.5em var(--color-neon-cyan)) 
+  filter: drop-shadow(0 0 1.5em var(--color-neon-cyan))
           drop-shadow(0 0 0.5em var(--color-neon-cyan));
+}
+
+/* Indeterminate progress bar animation */
+@keyframes pulse-slide {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(300%);
+    opacity: 0.6;
+  }
+}
+
+.animate-pulse-slide {
+  animation: pulse-slide 1.5s ease-in-out infinite;
 }

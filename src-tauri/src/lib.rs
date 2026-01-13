@@ -1,15 +1,36 @@
 mod audio;
+mod beat_detection;
 mod binary;
 mod ffmpeg;
 mod ffmpeg_runtime;
 mod ffmpeg_shim;
 mod http;
+mod pipeline;
 mod youtube;
 
 use serde::{Deserialize, Serialize};
+use specta::Type;
 use tauri::{ipc::Channel, Manager};
+use tauri_specta::{collect_commands, collect_events, Builder, Event};
+use tokio::sync::{mpsc, Mutex as TokioMutex};
 
-#[derive(Clone, Serialize)]
+/// Global app notification event for typesafe event communication
+#[derive(Clone, Serialize, Deserialize, Type, Event)]
+#[serde(rename_all = "camelCase")]
+pub struct AppNotification {
+    pub level: NotificationLevel,
+    pub message: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum NotificationLevel {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoMetadata {
     pub title: String,
@@ -19,10 +40,11 @@ pub struct VideoMetadata {
     pub video_id: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase", tag = "event", content = "data")]
 pub enum ExtractionEvent {
     Started {
+        #[serde(rename = "videoId")]
         video_id: String,
     },
     Progress {
@@ -30,17 +52,28 @@ pub enum ExtractionEvent {
         status: String,
     },
     AudioInfo {
+        #[serde(rename = "sampleRate")]
         sample_rate: u32,
     },
     WaveformProgress {
+        #[serde(rename = "totalPeaks")]
         total_peaks: usize,
     },
     WaveformChunk {
         peaks: Vec<f32>,
         offset: usize,
     },
+    BeatInfo {
+        bpm: f32,
+        #[serde(rename = "bpmConfidence")]
+        bpm_confidence: f32,
+        beats: Vec<f64>,
+        onsets: Vec<f64>,
+    },
     Completed {
+        #[serde(rename = "audioPath")]
         audio_path: String,
+        #[serde(rename = "durationSecs")]
         duration_secs: f64,
     },
     Error {
@@ -48,7 +81,7 @@ pub enum ExtractionEvent {
     },
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WaveformData {
     pub peaks: Vec<f32>,
@@ -57,16 +90,19 @@ pub struct WaveformData {
 }
 
 #[tauri::command]
+#[specta::specta]
 fn validate_youtube_url(url: &str) -> Result<String, String> {
     youtube::extract_video_id(url).ok_or_else(|| "Invalid YouTube URL".to_string())
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn fetch_video_metadata(url: &str) -> Result<VideoMetadata, String> {
     youtube::fetch_oembed_metadata(url).await
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn extract_audio(
     app: tauri::AppHandle,
     url: String,
@@ -150,7 +186,7 @@ async fn extract_audio(
                 w.peaks.len(),
                 w.duration_secs
             );
-            
+
             w
         }
         Err(e) => {
@@ -159,6 +195,34 @@ async fn extract_audio(
             return Err(e);
         }
     };
+
+    // Beat detection
+    let _ = on_event.send(ExtractionEvent::Progress {
+        percent: 0.0,
+        status: "Analyzing beats and tempo...".to_string(),
+    });
+
+    match beat_detection::analyze_beats(&output_path) {
+        Ok(beat_info) => {
+            println!(
+                "[tubetape] Beat analysis complete: {:.1} BPM (confidence: {:.2}), {} beats, {} onsets",
+                beat_info.bpm,
+                beat_info.bpm_confidence,
+                beat_info.beats.len(),
+                beat_info.onsets.len()
+            );
+            let _ = on_event.send(ExtractionEvent::BeatInfo {
+                bpm: beat_info.bpm,
+                bpm_confidence: beat_info.bpm_confidence,
+                beats: beat_info.beats,
+                onsets: beat_info.onsets,
+            });
+        }
+        Err(e) => {
+            // Beat detection failure is non-fatal, log and continue
+            eprintln!("[tubetape] Beat detection failed (non-fatal): {}", e);
+        }
+    }
 
     let audio_path_str = output_path.to_string_lossy().to_string();
     println!(
@@ -176,23 +240,45 @@ async fn extract_audio(
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn get_waveform(audio_path: String) -> Result<WaveformData, String> {
     let path = std::path::PathBuf::from(&audio_path);
     audio::generate_waveform_peaks(&path, |_, _| {})
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase", tag = "event", content = "data")]
 pub enum WaveformEvent {
-    Started { audio_path: String },
-    AudioInfo { sample_rate: u32, duration_secs: f64 },
-    Progress { total_peaks: usize },
-    Chunk { peaks: Vec<f32>, offset: usize },
-    Completed { peaks: Vec<f32>, duration_secs: f64 },
-    Error { message: String },
+    Started {
+        #[serde(rename = "audioPath")]
+        audio_path: String,
+    },
+    AudioInfo {
+        #[serde(rename = "sampleRate")]
+        sample_rate: u32,
+        #[serde(rename = "durationSecs")]
+        duration_secs: f64,
+    },
+    Progress {
+        #[serde(rename = "totalPeaks")]
+        total_peaks: usize,
+    },
+    Chunk {
+        peaks: Vec<f32>,
+        offset: usize,
+    },
+    Completed {
+        peaks: Vec<f32>,
+        #[serde(rename = "durationSecs")]
+        duration_secs: f64,
+    },
+    Error {
+        message: String,
+    },
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn generate_waveform_stream(
     audio_path: String,
     on_event: Channel<WaveformEvent>,
@@ -232,6 +318,7 @@ async fn generate_waveform_stream(
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn check_cached_audio(
     app: tauri::AppHandle,
     video_id: String,
@@ -253,7 +340,7 @@ async fn check_cached_audio(
     Ok(None)
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CachedAudioInfo {
     pub audio_path: String,
@@ -262,6 +349,7 @@ pub struct CachedAudioInfo {
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn export_sample(
     _app: tauri::AppHandle,
     source_path: String,
@@ -282,7 +370,122 @@ fn get_audio_output_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, St
         .map_err(|e| format!("Failed to get app data directory: {}", e))
 }
 
-#[derive(Clone, Serialize)]
+#[tauri::command]
+#[specta::specta]
+async fn analyze_audio_beats(audio_path: String) -> Result<beat_detection::BeatInfo, String> {
+    let path = std::path::PathBuf::from(&audio_path);
+    beat_detection::analyze_beats(&path)
+}
+
+/// Process an existing audio file (waveform + beat detection).
+/// Used when audio is already downloaded (e.g., from cache).
+#[tauri::command]
+#[specta::specta]
+async fn process_audio(
+    audio_path: String,
+    on_event: Channel<pipeline::PipelineEvent>,
+) -> Result<pipeline::PipelineResult, String> {
+    let path = std::path::PathBuf::from(&audio_path);
+    let executor = pipeline::PipelineExecutor::for_existing_audio(path, on_event);
+    executor.execute().await
+}
+
+// ============================================================================
+// Unified Pipeline Commands
+// ============================================================================
+
+/// State wrapper for the pipeline command sender.
+/// This allows the frontend to send commands to a running pipeline.
+struct PipelineCommandSender {
+    sender: TokioMutex<Option<mpsc::Sender<pipeline::PipelineCommand>>>,
+}
+
+impl PipelineCommandSender {
+    fn new() -> Self {
+        Self {
+            sender: TokioMutex::new(None),
+        }
+    }
+}
+
+/// Start the unified pipeline for fetching and processing audio.
+///
+/// This command:
+/// 1. Emits `RequestExtraction` for the frontend to run Pyodide/yt-dlp
+/// 2. Waits for extraction progress/completion via `pipeline_notify`
+/// 3. Runs FFmpeg commands for audio conversion
+/// 4. Runs waveform + beat detection in parallel
+/// 5. Reports unified progress throughout
+#[tauri::command]
+#[specta::specta]
+async fn run_pipeline(
+    app: tauri::AppHandle,
+    url: String,
+    on_event: Channel<pipeline::PipelineEvent>,
+    state: tauri::State<'_, PipelineCommandSender>,
+) -> Result<pipeline::PipelineResult, String> {
+    let video_id =
+        youtube::extract_video_id(&url).ok_or_else(|| "Invalid YouTube URL".to_string())?;
+
+    let output_dir = get_audio_output_dir(&app)?;
+    std::fs::create_dir_all(&output_dir)
+        .map_err(|e| format!("Failed to create output directory: {}", e))?;
+
+    let output_path = output_dir.join(format!("{}.aac", video_id));
+
+    println!(
+        "[pipeline] Starting pipeline for {} -> {:?}",
+        video_id, output_path
+    );
+
+    // Create command channel for frontend → pipeline communication
+    let (command_tx, command_rx) = mpsc::channel::<pipeline::PipelineCommand>(32);
+
+    // Store sender in state so frontend can send commands via pipeline_notify
+    {
+        let mut sender_guard = state.sender.lock().await;
+        *sender_guard = Some(command_tx);
+    }
+
+    // Create and run the pipeline
+    let executor = pipeline::PipelineExecutor::new(url, output_path, on_event, command_rx);
+
+    let result = executor.run().await;
+
+    // Clear the sender when done
+    {
+        let mut sender_guard = state.sender.lock().await;
+        *sender_guard = None;
+    }
+
+    result
+}
+
+/// Send a command to the running pipeline.
+///
+/// Used by the frontend to:
+/// - Report extraction progress (`DownloadProgress`)
+/// - Signal extraction completion (`ExtractionComplete`)
+/// - Signal extraction failure (`ExtractionFailed`)
+#[tauri::command]
+#[specta::specta]
+async fn pipeline_notify(
+    state: tauri::State<'_, PipelineCommandSender>,
+    command: pipeline::PipelineCommand,
+) -> Result<(), String> {
+    let sender_guard = state.sender.lock().await;
+
+    if let Some(sender) = sender_guard.as_ref() {
+        sender
+            .send(command)
+            .await
+            .map_err(|e| format!("Failed to send pipeline command: {}", e))
+    } else {
+        Err("No pipeline is currently running".to_string())
+    }
+}
+
+#[derive(Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AppStats {
     pub cache_size_mb: f64,
@@ -297,6 +500,7 @@ struct AppStatsState {
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn get_app_stats(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppStatsState>,
@@ -339,11 +543,48 @@ async fn get_app_stats(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let builder = Builder::<tauri::Wry>::new()
+        .commands(collect_commands![
+            validate_youtube_url,
+            fetch_video_metadata,
+            extract_audio,
+            get_waveform,
+            generate_waveform_stream,
+            export_sample,
+            check_cached_audio,
+            get_app_stats,
+            analyze_audio_beats,
+            process_audio,
+            run_pipeline,
+            pipeline_notify,
+            binary::get_qjs_status,
+            binary::get_ffmpeg_status,
+            http::http_request,
+            http::download_to_file,
+            http::download_to_file_with_progress,
+            ffmpeg::dlopen_ffmpeg,
+            ffmpeg::ffprobe_capabilities,
+        ])
+        .events(collect_events![AppNotification]);
+
+    #[cfg(debug_assertions)]
+    builder
+        .export(
+            specta_typescript::Typescript::default()
+                .bigint(specta_typescript::BigIntExportBehavior::Number),
+            "../src/bindings.ts",
+        )
+        .expect("Failed to export TypeScript bindings");
+
     tauri::Builder::default()
         .manage(AppStatsState {
             system: Mutex::new(System::new_all()),
         })
-        .setup(|app| {
+        .manage(PipelineCommandSender::new())
+        .invoke_handler(builder.invoke_handler())
+        .setup(move |app| {
+            builder.mount_events(app);
+
             if let Some(lib_path) = binary::get_ffmpeg_library_path(app.handle()) {
                 println!("[tubetape] FFmpeg library found: {:?}", lib_path);
                 if let Some(lib_dir) = lib_path.parent() {
@@ -357,22 +598,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![
-            validate_youtube_url,
-            fetch_video_metadata,
-            extract_audio,
-            get_waveform,
-            generate_waveform_stream,
-            export_sample,
-            check_cached_audio,
-            get_app_stats,
-            binary::get_qjs_status,
-            binary::get_ffmpeg_status,
-            http::http_request,
-            http::download_to_file,
-            ffmpeg::dlopen_ffmpeg,
-            ffmpeg::ffprobe_capabilities,
-        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

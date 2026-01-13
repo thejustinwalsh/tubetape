@@ -4,20 +4,23 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ React Frontend                                                  │
-│   URLInput → invoke("extract_audio", {url})                     │
+│ Pyodide Worker (src/wasm/pyodide-worker.ts)                     │
+│   subprocess.run(['ffmpeg', ...]) intercepted                   │
+│       └→ nativeFFmpegAdapter() → invokeTauri('dlopen_ffmpeg')   │
 └─────────────────────┬───────────────────────────────────────────┘
                       │ Tauri IPC
 ┌─────────────────────▼───────────────────────────────────────────┐
 │ Rust Backend (src-tauri/src/)                                   │
-│   youtube.rs: #[tauri::command] extract_audio()                 │
-│       └→ ffmpeg_dlopen.rs: run_ffmpeg_command()                 │
+│   ffmpeg.rs: dlopen_ffmpeg() / ffprobe_capabilities()           │
+│       └→ ffmpeg_shim.rs: execute_ffmpeg() / execute_ffprobe()   │
+│           └→ ffmpeg_runtime.rs: FFmpegFunctions (direct API)    │
 └─────────────────────┬───────────────────────────────────────────┘
                       │ dlopen / FFI
 ┌─────────────────────▼───────────────────────────────────────────┐
-│ libffmpeg.dylib                                                 │
-│   ffmpeg_lib.c  →  ffmpeg_main_internal() / ffprobe_main_internal()
-│                    (patched FFmpeg with exit→longjmp)           │
+│ FFmpeg Shared Libraries                                         │
+│   libavformat.dylib, libavcodec.dylib,                          │
+│   libavutil.dylib, libswresample.dylib                          │
+│   (standard FFmpeg build, no patching required)                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -27,55 +30,115 @@
 bun run scripts/setup-ffmpeg.ts
 ```
 
-1. **Fetch** - Downloads FFmpeg source from GitHub
-2. **Patch** - Copies `ffmpeg_lib.c/h` to fftools, modifies `ffmpeg.c` and `ffprobe.c`:
-   - Renames `main()` → `*_main_internal()`
-   - Replaces `exit()` → `longjmp()` via `ffmpeg_lib_exit_handler()`
-   - Injects cleanup functions to reset static globals
-3. **Build** - Compiles FFmpeg as shared libs, links fftools into `libffmpeg.dylib`
-4. **Output** - `src-tauri/binaries/ffmpeg/libffmpeg.dylib`
+1. **Fetch** - Downloads FFmpeg and LAME sources
+2. **Build LAME** - Compiles LAME as a static library with MP3 encoding support
+3. **Build FFmpeg** - Compiles FFmpeg as shared libraries with LAME linked in:
+   - `libavutil.dylib`
+   - `libswresample.dylib`
+   - `libavcodec.dylib`
+   - `libavformat.dylib`
+4. **Fix paths** - Updates library install names to use `@loader_path` (macOS) or `$ORIGIN` (Linux)
+5. **Output** - `src-tauri/binaries/ffmpeg/`
 
-## Library Lifecycle
+## How It Works
 
+Instead of patching FFmpeg's `main()` function, we use **dlopen** to load FFmpeg's shared libraries and call the C API functions directly:
+
+### Library Loading (ffmpeg_runtime.rs)
+
+```rust
+// Load libraries in dependency order
+let avutil = Library::new("libavutil.dylib")?;
+let swresample = Library::new("libswresample.dylib")?;
+let avcodec = Library::new("libavcodec.dylib")?;
+let avformat = Library::new("libavformat.dylib")?;
+
+// Get function pointers
+let functions = FFmpegFunctions {
+    avformat_open_input: *avformat.get(b"avformat_open_input\0")?,
+    avcodec_find_encoder_by_name: *avcodec.get(b"avcodec_find_encoder_by_name\0")?,
+    // ... 40+ more functions
+};
 ```
-load (dlopen) → init → use (commands) → cleanup → unload (dlclose)
+
+### Command Shim (ffmpeg_shim.rs)
+
+The shim parses FFmpeg-style command-line arguments and translates them to direct API calls:
+
+```rust
+// ffmpeg -i input.mp4 -vn -c:a copy output.aac
+// becomes:
+let cmd = FfmpegRemux {
+    input: "input.mp4",
+    output: "output.aac",
+    audio_codec: AudioCodec::Copy,
+    no_video: true,
+    ...
+};
+// Then calls avformat_open_input(), av_read_frame(), etc.
 ```
 
-`run_ffmpeg_command()` handles the full cycle per invocation - no state persists.
+### Supported Operations
 
-## Safety Guarantees
-
-| Operation | Safe | Behavior |
-|-----------|------|----------|
-| Double init | Yes | No-op (atomic guard) |
-| Double cleanup | Yes | No-op (atomic guard) |
-| Cleanup before init | Yes | Early return |
-| Re-init after cleanup | Yes | Works (hot reload) |
-
-## Why Cleanup Functions Exist
-
-FFmpeg uses 50+ static globals that persist between calls. The build script injects:
-- `ffmpeg_cleanup_internal()` - frees filtergraphs, files, hw devices
-- `ffprobe_cleanup_internal()` - resets all `do_show_*` flags, frees buffers
-
-Without these, second invocation crashes or produces wrong results.
+| Operation | Implementation |
+|-----------|----------------|
+| Audio remux (copy) | Direct packet copying via av_read_frame/av_interleaved_write_frame |
+| Audio transcode | Decode → resample → encode via avcodec/swresample APIs |
+| ffprobe streams | avformat_open_input + avformat_find_stream_info |
+| ffprobe -bsfs | Static capability list |
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `src-tauri/src/ffmpeg_dlopen.rs` | Rust FFI bindings, `run_ffmpeg_command()` |
-| `src-tauri/src/youtube.rs` | Tauri commands using FFmpeg |
-| `scripts/patches/ffmpeg/fftools/ffmpeg_lib.c` | C wrapper (init/cleanup/main) |
-| `scripts/build-ffmpeg.ts` | Build script, patching logic |
+| `src-tauri/src/ffmpeg_runtime.rs` | dlopen loader, FFmpegFunctions struct, AudioFile reader, export_sample() |
+| `src-tauri/src/ffmpeg_shim.rs` | CLI argument parser, remux/transcode logic |
+| `src-tauri/src/ffmpeg.rs` | Tauri commands: dlopen_ffmpeg, ffprobe_capabilities |
+| `scripts/build-ffmpeg.ts` | Build script (no patching, just configure/make) |
+| `src/wasm/pyodide-worker.ts` | Intercepts subprocess.run(['ffmpeg', ...]) calls |
 
-## C API
+## Rust API
+
+### FFmpegFunctions
+
+All FFmpeg C API functions are accessed through the `FFmpegFunctions` struct:
+
+```rust
+let ff = get_ffmpeg()?;
+
+// Open input file
+let mut ctx: *mut AVFormatContext = null_mut();
+(ff.avformat_open_input)(&mut ctx, path, null(), null_mut());
+
+// Find audio stream
+let stream_idx = (ff.av_find_best_stream)(ctx, AVMEDIA_TYPE_AUDIO, -1, -1, &mut decoder, 0);
+
+// Read/write packets
+while (ff.av_read_frame)(ctx, packet) >= 0 {
+    (ff.av_interleaved_write_frame)(out_ctx, packet);
+}
+```
+
+### High-Level Functions
 
 | Function | Purpose |
 |----------|---------|
-| `ffmpeg_lib_init()` | Initialize (idempotent) |
-| `ffmpeg_lib_cleanup()` | Reset state (idempotent) |
-| `ffmpeg_lib_main(argc, argv)` | Run ffmpeg command |
-| `ffprobe_lib_main(argc, argv)` | Run ffprobe command |
-| `ffmpeg_lib_set_io(ctx)` | Redirect stdio |
-| `ffmpeg_lib_cancel()` | Request cancellation |
+| `get_ffmpeg()` | Get FFmpegFunctions (loads libraries on first call) |
+| `ffmpeg_version()` | Get version string |
+| `AudioFile::open(path)` | Open audio file, get metadata |
+| `export_sample(input, output, start, end)` | Export audio segment with transcoding |
+
+## Tauri Commands
+
+| Command | Purpose |
+|---------|---------|
+| `dlopen_ffmpeg(command, args)` | Execute ffmpeg/ffprobe with CLI-style args |
+| `ffprobe_capabilities()` | Get bitstream filter list and version |
+
+## Why Direct API Instead of Patched Main
+
+1. **No source patching** - Standard FFmpeg build, easier to update
+2. **No longjmp hacks** - Clean error handling via return codes
+3. **No static global issues** - Each operation is self-contained
+4. **Better control** - Can intercept at any point, add progress callbacks
+5. **Smaller binary** - Only link needed libraries, not full ffmpeg binary

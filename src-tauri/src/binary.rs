@@ -143,6 +143,7 @@ pub async fn ensure_qjs_binary(app_handle: tauri::AppHandle) -> Result<PathBuf, 
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn get_qjs_status(app_handle: tauri::AppHandle) -> Result<String, String> {
     if let Some(bundled) = get_bundled_qjs_path(&app_handle) {
         Ok(format!("bundled: {}", bundled.display()))
@@ -152,6 +153,7 @@ pub async fn get_qjs_status(app_handle: tauri::AppHandle) -> Result<String, Stri
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn get_ffmpeg_status(app_handle: tauri::AppHandle) -> Result<String, String> {
     let mut status = Vec::new();
 
