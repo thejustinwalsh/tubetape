@@ -1,4 +1,4 @@
-name: 'Release Tubetape'
+name: 'Publish Release'
 
 on:
   push:
