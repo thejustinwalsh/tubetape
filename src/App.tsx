@@ -112,21 +112,20 @@ function App() {
       },
       onDownloadProgress: async (downloadProgress) => {
         // Forward download progress to pipeline
-        try {
-          // Convert to integers - Rust expects u64
-          const bytesDownloaded = Math.floor(parseDownloadSize(downloadProgress.downloaded));
-          const totalBytes = downloadProgress.total !== 'unknown'
-            ? Math.floor(parseDownloadSize(downloadProgress.total))
-            : null;
+        // Convert to integers - Rust expects u64
+        const bytesDownloaded = Math.floor(parseDownloadSize(downloadProgress.downloaded));
+        const totalBytes = downloadProgress.total !== 'unknown'
+          ? Math.floor(parseDownloadSize(downloadProgress.total))
+          : null;
 
-          const command: PipelineCommand = {
-            command: "downloadProgress",
-            data: { bytesDownloaded, totalBytes }
-          };
-          await commands.pipelineNotify(command);
-        } catch (e) {
-          // Ignore errors forwarding progress - pipeline may have completed
-          console.debug('[App] Failed to forward download progress:', e);
+        const command: PipelineCommand = {
+          command: "downloadProgress",
+          data: { bytesDownloaded, totalBytes }
+        };
+        
+        const result = await commands.pipelineNotify(command);
+        if (result.status === "error") {
+          console.debug('[App] Failed to forward download progress:', result.error);
         }
       }
     });
@@ -160,83 +159,84 @@ function App() {
     setAudioBuffer(null);
     setBeatInfo(null);
 
-    try {
-      // Fetch metadata first (quick operation)
-      const metadataResult = await commands.fetchVideoMetadata(url);
-      if (metadataResult.status === "error") throw new Error(metadataResult.error);
-      const videoMetadata = metadataResult.data;
-      setMetadata(videoMetadata);
-      setAppState("extracting");
-      setProgress({ percent: 0, status: "Starting..." });
+    // Fetch metadata first (quick operation)
+    const metadataResult = await commands.fetchVideoMetadata(url);
+    if (metadataResult.status === "error") {
+      console.error('[App] Metadata fetch failed:', metadataResult.error);
+      setError(metadataResult.error);
+      setAppState("error");
+      return;
+    }
 
-      // Create pipeline event channel
-      const pipelineChannel = new Channel<PipelineEvent>();
+    const videoMetadata = metadataResult.data;
+    setMetadata(videoMetadata);
+    setAppState("extracting");
+    setProgress({ percent: 0, status: "Starting..." });
 
-      pipelineChannel.onmessage = async (event) => {
-        switch (event.event) {
-          case "started":
-            console.log('[Pipeline] Started:', event.data.stages);
-            break;
+    // Create pipeline event channel
+    const pipelineChannel = new Channel<PipelineEvent>();
 
-          case "requestExtraction":
-            // Pipeline is asking us to run Pyodide extraction
-            console.log('[Pipeline] Extraction requested for:', event.data.url);
-            try {
-              await runExtraction(event.data.url, event.data.outputPath);
-            } catch (err) {
-              // Notify pipeline of failure
-              const failCommand: PipelineCommand = {
-                command: "extractionFailed",
-                data: { message: err instanceof Error ? err.message : String(err) }
-              };
-              await commands.pipelineNotify(failCommand);
-            }
-            break;
+    pipelineChannel.onmessage = async (event) => {
+      switch (event.event) {
+        case "started":
+          console.log('[Pipeline] Started:', event.data.stages);
+          break;
 
-          case "progress":
-            setProgress({
-              percent: event.data.overallPercent,
-              status: event.data.message
-            });
-            break;
+        case "requestExtraction":
+          // Pipeline is asking us to run Pyodide extraction
+          console.log('[Pipeline] Extraction requested for:', event.data.url);
+          runExtraction(event.data.url, event.data.outputPath).catch(async (err) => {
+            // Notify pipeline of failure
+            const failCommand: PipelineCommand = {
+              command: "extractionFailed",
+              data: { message: err instanceof Error ? err.message : String(err) }
+            };
+            await commands.pipelineNotify(failCommand);
+          });
+          break;
 
-          case "waveformComplete":
-            // Audio path is set from completed event, just update duration/info here
-            setDuration(event.data.durationSecs);
-            setAudioInfo({
-              sampleRate: event.data.sampleRate,
-              durationSecs: event.data.durationSecs,
-            });
-            break;
+        case "progress":
+          setProgress({
+            percent: event.data.overallPercent,
+            status: event.data.message
+          });
+          break;
 
-          case "beatDetectionComplete":
-            console.log('[Pipeline] Beat analysis complete:', event.data);
-            setBeatInfo(event.data);
-            break;
+        case "waveformComplete":
+          // Audio path is set from completed event, just update duration/info here
+          setDuration(event.data.durationSecs);
+          setAudioInfo({
+            sampleRate: event.data.sampleRate,
+            durationSecs: event.data.durationSecs,
+          });
+          break;
 
-          case "completed":
-            console.log('[Pipeline] Completed:', event.data);
-            setAudioPath(event.data.audioPath);
-            setProgress(null);
-            setAppState("ready");
-            refetchStats();
-            break;
+        case "beatDetectionComplete":
+          console.log('[Pipeline] Beat analysis complete:', event.data);
+          setBeatInfo(event.data);
+          break;
 
-          case "error":
-            console.error('[Pipeline] Error:', event.data);
-            setError(`${event.data.stage}: ${event.data.message}`);
-            setAppState("error");
-            break;
-        }
-      };
+        case "completed":
+          console.log('[Pipeline] Completed:', event.data);
+          setAudioPath(event.data.audioPath);
+          setProgress(null);
+          setAppState("ready");
+          refetchStats();
+          break;
 
-      // Start the unified pipeline - it will emit RequestExtraction for us to handle
-      await commands.runPipeline(url, pipelineChannel);
+        case "error":
+          console.error('[Pipeline] Error:', event.data);
+          setError(`${event.data.stage}: ${event.data.message}`);
+          setAppState("error");
+          break;
+      }
+    };
 
-    } catch (err) {
-      console.error('[App] Pipeline failed:', err);
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(errorMessage);
+    // Start the unified pipeline - it will emit RequestExtraction for us to handle
+    const pipelineResult = await commands.runPipeline(url, pipelineChannel);
+    if (pipelineResult.status === "error") {
+      console.error('[App] Pipeline failed:', pipelineResult.error);
+      setError(pipelineResult.error);
       setAppState("error");
     }
   }, [refetchStats, runExtraction]);
@@ -266,66 +266,70 @@ function App() {
     setAudioBuffer(null);
     setBeatInfo(null);
 
-    try {
-      const cachedResult = await commands.checkCachedAudio(project.videoId);
-      if (cachedResult.status === "error") throw new Error(cachedResult.error);
-      const cachedAudio = cachedResult.data;
-
-      if (cachedAudio) {
-        setMetadata({
-          title: project.title,
-          authorName: project.authorName,
-          authorUrl: project.authorUrl,
-          thumbnailUrl: `https://img.youtube.com/vi/${project.videoId}/mqdefault.jpg`,
-          videoId: project.videoId,
-        });
-        setCurrentProject(project);
-        setAppState("extracting");
-        setProgress({ percent: 0, status: "Processing audio..." });
-
-        // Run pipeline for cached audio (waveform + beat detection in parallel)
-        const pipelineChannel = new Channel<PipelineEvent>();
-
-        pipelineChannel.onmessage = (event) => {
-          switch (event.event) {
-            case "progress": {
-              const displayPercent = event.data.overallPercent;
-              setProgress({ percent: displayPercent, status: "Processing audio..." });
-            } break;
-            case "waveformComplete":
-              setAudioPath(cachedAudio.audioPath);
-              setDuration(event.data.durationSecs);
-              setAudioInfo({
-                sampleRate: event.data.sampleRate,
-                durationSecs: event.data.durationSecs,
-              });
-              break;
-            case "beatDetectionComplete":
-              console.log('[App] Beat analysis complete:', event.data);
-              setBeatInfo(event.data);
-              break;
-            case "completed":
-              setProgress(null);
-              setAppState("ready");
-              break;
-            case "error":
-              setError(`${event.data.stage}: ${event.data.message}`);
-              setAppState("error");
-              break;
-          }
-        };
-
-        await commands.processAudio(cachedAudio.audioPath, pipelineChannel);
-      } else {
-        const url = `https://youtube.com/watch?v=${project.videoId}`;
-        await handleUrlSubmit(url);
-        setCurrentProject(project);
-      }
-    } catch (err) {
-      console.error('[App] Project load failed:', err);
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(errorMessage);
+    const cachedResult = await commands.checkCachedAudio(project.videoId);
+    if (cachedResult.status === "error") {
+      console.error('[App] Cache check failed:', cachedResult.error);
+      setError(cachedResult.error);
       setAppState("error");
+      return;
+    }
+
+    const cachedAudio = cachedResult.data;
+
+    if (cachedAudio) {
+      setMetadata({
+        title: project.title,
+        authorName: project.authorName,
+        authorUrl: project.authorUrl,
+        thumbnailUrl: `https://img.youtube.com/vi/${project.videoId}/mqdefault.jpg`,
+        videoId: project.videoId,
+      });
+      setCurrentProject(project);
+      setAppState("extracting");
+      setProgress({ percent: 0, status: "Processing audio..." });
+
+      // Run pipeline for cached audio (waveform + beat detection in parallel)
+      const pipelineChannel = new Channel<PipelineEvent>();
+
+      pipelineChannel.onmessage = (event) => {
+        switch (event.event) {
+          case "progress": {
+            const displayPercent = event.data.overallPercent;
+            setProgress({ percent: displayPercent, status: "Processing audio..." });
+          } break;
+          case "waveformComplete":
+            setAudioPath(cachedAudio.audioPath);
+            setDuration(event.data.durationSecs);
+            setAudioInfo({
+              sampleRate: event.data.sampleRate,
+              durationSecs: event.data.durationSecs,
+            });
+            break;
+          case "beatDetectionComplete":
+            console.log('[App] Beat analysis complete:', event.data);
+            setBeatInfo(event.data);
+            break;
+          case "completed":
+            setProgress(null);
+            setAppState("ready");
+            break;
+          case "error":
+            setError(`${event.data.stage}: ${event.data.message}`);
+            setAppState("error");
+            break;
+        }
+      };
+
+      const processResult = await commands.processAudio(cachedAudio.audioPath, pipelineChannel);
+      if (processResult.status === "error") {
+        console.error('[App] Process audio failed:', processResult.error);
+        setError(processResult.error);
+        setAppState("error");
+      }
+    } else {
+      const url = `https://youtube.com/watch?v=${project.videoId}`;
+      await handleUrlSubmit(url);
+      setCurrentProject(project);
     }
   }, [handleUrlSubmit]);
 
@@ -383,18 +387,16 @@ function App() {
   }, [db]);
 
   const handleExportSample = useCallback(async (sample: SampleDocType) => {
-    try {
-      const savePath = await save({
-        defaultPath: `${sample.name.replace(/[^a-zA-Z0-9]/g, "_")}.mp3`,
-        filters: [{ name: "Audio", extensions: ["mp3"] }],
-      });
+    const savePath = await save({
+      defaultPath: `${sample.name.replace(/[^a-zA-Z0-9]/g, "_")}.mp3`,
+      filters: [{ name: "Audio", extensions: ["mp3"] }],
+    });
 
-      if (!savePath) return;
+    if (!savePath) return;
 
-      const result = await commands.exportSample(sample.sourceAudioPath, savePath, sample.startTime, sample.endTime);
-      if (result.status === "error") throw new Error(result.error);
-    } catch (err) {
-      console.error("Export failed:", err);
+    const result = await commands.exportSample(sample.sourceAudioPath, savePath, sample.startTime, sample.endTime);
+    if (result.status === "error") {
+      console.error("Export failed:", result.error);
     }
   }, []);
 
