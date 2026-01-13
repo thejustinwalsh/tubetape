@@ -117,15 +117,25 @@ jobs:
           OUTPUT: CHANGELOG.md
           GITHUB_REPO: ${{ github.repository }}
 
-      - name: Create or update release branch from main
+      - name: Create staging branch from release and merge main
         if: steps.version.outputs.needs_release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           BRANCH="${{ steps.branch.outputs.name }}"
-          # Force create/update the branch to point to current main HEAD
-          # This ensures all changes from main are included
-          git push origin HEAD:refs/heads/$BRANCH --force
+
+          # Fetch release branch
+          git fetch origin release
+
+          # Create/reset staging branch FROM release (so release is an ancestor)
+          git checkout -B "$BRANCH" origin/release
+
+          # Merge main into staging, taking everything from main on conflicts
+          # -X theirs = when conflicts occur, take THEIR (main) version
+          git merge origin/main -m "chore: merge main into release staging" --no-edit -X theirs
+
+          # Force push to remote (in case branch existed with different history)
+          git push origin "$BRANCH" --force
 
       - name: Commit and push release changes
         if: steps.version.outputs.needs_release == 'true'
@@ -137,29 +147,6 @@ jobs:
             src-tauri/tauri.conf.json
             src-tauri/Cargo.toml
             CHANGELOG.md
-
-      - name: Merge release into staging (auto-resolve conflicts)
-        if: steps.version.outputs.needs_release == 'true'
-        run: |
-          BRANCH="${{ steps.branch.outputs.name }}"
-          
-          # Configure git for merge commit
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Fetch latest state of both branches
-          git fetch origin "$BRANCH" release
-          git checkout "$BRANCH"
-          
-          # Merge release into staging, accepting staging's version for conflicts
-          # -X ours = when conflicts occur, take OUR (staging) version automatically
-          if git merge origin/release -m "chore: sync with release branch" --no-edit -X ours; then
-            echo "Merge completed cleanly"
-          else
-            echo "Merge completed with auto-resolved conflicts"
-          fi
-          
-          git push origin "$BRANCH"
 
       - name: Create PR if none exists
         if: steps.version.outputs.needs_release == 'true' && steps.check_pr.outputs.pr_exists != 'true'
