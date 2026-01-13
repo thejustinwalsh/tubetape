@@ -1,10 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
-
-interface AppStats {
-    cacheSizeMb: number;
-    memoryUsageMb: number;
-}
+import { commands } from "../bindings";
 
 interface SystemStats {
     cacheSizeMb: number;
@@ -19,7 +14,9 @@ export function useAppStats() {
 
     const fetchStats = useCallback(async () => {
         try {
-            const appStats = await invoke<AppStats>("get_app_stats");
+            const result = await commands.getAppStats();
+            if (result.status === "error") throw new Error(result.error);
+            const appStats = result.data;
             setStats({
                 cacheSizeMb: appStats.cacheSizeMb,
                 memoryUsageMb: Math.round(appStats.memoryUsageMb),

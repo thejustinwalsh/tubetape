@@ -31,3 +31,4 @@ dist-ssr
 
 # Downloaded source files for building binaries
 src-tauri/vendor/
+.claude/settings.local.json

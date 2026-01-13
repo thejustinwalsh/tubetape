@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
-import { invoke, Channel } from "@tauri-apps/api/core";
+import { Channel } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { appDataDir, join } from "@tauri-apps/api/path";
 import "./App.css";
 
 import ProjectCombobox from "./components/ProjectCombobox";
@@ -9,23 +8,12 @@ import CassetteTape from "./components/CassetteTape";
 import VideoUnfurl from "./components/VideoUnfurl";
 import Waveform from "./components/Waveform";
 import SampleWaveform from "./components/SampleWaveform";
+import ErrorDialog from "./components/ErrorDialog";
 import { getDatabase, generateSampleId, type SampleDocType, type TubetapeDatabase } from "./lib/db";
-import type { VideoMetadata, AppState, Project, CachedAudioInfo, AudioInfo } from "./types";
+import type { AppState, Project, AudioInfo } from "./types";
+import { commands, type VideoMetadata, type BeatInfo, type PipelineEvent, type PipelineCommand } from "./bindings";
 import { useAppStats } from "./hooks/useAppStats";
 import { usePyodide } from "./hooks/usePyodide";
-
-interface WaveformEvent {
-  event: "started" | "audioInfo" | "progress" | "chunk" | "completed" | "error";
-  data: {
-    audio_path?: string;
-    sample_rate?: number;
-    duration_secs?: number;
-    total_peaks?: number;
-    peaks?: number[];
-    offset?: number;
-    message?: string;
-  };
-}
 
 function App() {
   const [appState, setAppState] = useState<AppState>("idle");
@@ -43,6 +31,7 @@ function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [audioInfo, setAudioInfo] = useState<AudioInfo | null>(null);
+  const [beatInfo, setBeatInfo] = useState<BeatInfo | null>(null);
 
   useEffect(() => {
     getDatabase().then(setDb);
@@ -86,6 +75,80 @@ function App() {
     return () => subscription.unsubscribe();
   }, [db, metadata]);
 
+  /**
+   * Parse download size string like "12.3 MB" to bytes
+   */
+  const parseDownloadSize = useCallback((sizeStr: string): number => {
+    const match = sizeStr.match(/^([\d.]+)\s*(MB|KB|GB|B)?$/i);
+    if (!match) return 0;
+    const value = parseFloat(match[1]);
+    const unit = (match[2] || 'B').toUpperCase();
+    switch (unit) {
+      case 'GB': return value * 1_000_000_000;
+      case 'MB': return value * 1_000_000;
+      case 'KB': return value * 1_000;
+      default: return value;
+    }
+  }, []);
+
+  /**
+   * Run Pyodide extraction and report progress back to the pipeline.
+   * Called when pipeline emits RequestExtraction event.
+   */
+  const runExtraction = useCallback(async (url: string, outputPath: string): Promise<void> => {
+    // Ensure Pyodide is initialized
+    if (pyodide.status === 'idle' || pyodide.status === 'error') {
+      await pyodide.initialize();
+    }
+
+    // Run extraction with progress forwarding
+    const result = await pyodide.extractAudio(url, outputPath, {
+      onProgress: async (extractProgress) => {
+        // Forward progress to pipeline based on phase
+        if (extractProgress.phase === 'error') {
+          // Errors will be caught and sent as ExtractionFailed
+          throw new Error(extractProgress.message);
+        }
+      },
+      onDownloadProgress: async (downloadProgress) => {
+        // Forward download progress to pipeline
+        // Convert to integers - Rust expects u64
+        const bytesDownloaded = Math.floor(parseDownloadSize(downloadProgress.downloaded));
+        const totalBytes = downloadProgress.total !== 'unknown'
+          ? Math.floor(parseDownloadSize(downloadProgress.total))
+          : null;
+
+        const command: PipelineCommand = {
+          command: "downloadProgress",
+          data: { bytesDownloaded, totalBytes }
+        };
+        
+        const result = await commands.pipelineNotify(command);
+        if (result.status === "error") {
+          console.debug('[App] Failed to forward download progress:', result.error);
+        }
+      }
+    });
+
+    // Notify pipeline that extraction completed
+    const ffmpegCommands = Array.isArray(result.ffmpegCommands) ? result.ffmpegCommands : [];
+    const completeCommand: PipelineCommand = {
+      command: "extractionComplete",
+      data: {
+        audioPath: outputPath,
+        ffmpegCommands: ffmpegCommands.map(cmd => ({
+          id: cmd.id,
+          command: cmd.command,
+          args: cmd.args,
+          inputPath: cmd.inputPath,
+          outputPath: cmd.outputPath,
+          status: cmd.status
+        }))
+      }
+    };
+    await commands.pipelineNotify(completeCommand);
+  }, [pyodide, parseDownloadSize]);
+
   const handleUrlSubmit = useCallback(async (url: string) => {
     setError(null);
     setAppState("loading-metadata");
@@ -94,106 +157,89 @@ function App() {
     setSamples([]);
     setSelectedRegion(null);
     setAudioBuffer(null);
+    setBeatInfo(null);
 
-    try {
-      const videoMetadata = await invoke<VideoMetadata>("fetch_video_metadata", { url });
-      setMetadata(videoMetadata);
-      setAppState("extracting");
+    // Fetch metadata first (quick operation)
+    const metadataResult = await commands.fetchVideoMetadata(url);
+    if (metadataResult.status === "error") {
+      console.error('[App] Metadata fetch failed:', metadataResult.error);
+      setError(metadataResult.error);
+      setAppState("error");
+      return;
+    }
 
-      if (pyodide.status === 'idle' || pyodide.status === 'error') {
-        setProgress({ percent: 0, status: "Initializing Pyodide..." });
-        await pyodide.initialize();
-      }
+    const videoMetadata = metadataResult.data;
+    setMetadata(videoMetadata);
+    setAppState("extracting");
+    setProgress({ percent: 0, status: "Starting..." });
 
-      setProgress({ percent: 0, status: "Starting download..." });
+    // Create pipeline event channel
+    const pipelineChannel = new Channel<PipelineEvent>();
 
-      const dataDir = await appDataDir();
-      const outputPath = await join(dataDir, "audio", `${videoMetadata.videoId}.aac`);
+    pipelineChannel.onmessage = async (event) => {
+      switch (event.event) {
+        case "started":
+          console.log('[Pipeline] Started:', event.data.stages);
+          break;
 
-      await pyodide.extractAudio(url, outputPath, {
-        onProgress: (extractProgress) => {
-          switch (extractProgress.phase) {
-            case 'initializing':
-              setProgress({ percent: 0, status: "Initializing..." });
-              break;
-            case 'extracting_info':
-              setProgress({ percent: 5, status: "Getting video info..." });
-              break;
-            case 'downloading':
-              setProgress({ percent: Math.min(50, 10 + extractProgress.percent * 0.4), status: extractProgress.message });
-              break;
-            case 'converting':
-              setProgress({ percent: Math.min(80, 50 + extractProgress.percent * 0.3), status: extractProgress.message });
-              break;
-            case 'completed':
-              setProgress({ percent: 80, status: "Extraction complete" });
-              break;
-            case 'error':
-              setError(extractProgress.message);
-              setAppState("error");
-              break;
-          }
-        },
-        onDownloadProgress: (downloadProgress) => {
-          setProgress({ 
-            percent: Math.min(50, 10 + downloadProgress.percent * 0.4), 
-            status: `Downloading: ${downloadProgress.percent.toFixed(1)}% at ${downloadProgress.speed}` 
+        case "requestExtraction":
+          // Pipeline is asking us to run Pyodide extraction
+          console.log('[Pipeline] Extraction requested for:', event.data.url);
+          runExtraction(event.data.url, event.data.outputPath).catch(async (err) => {
+            // Notify pipeline of failure
+            const failCommand: PipelineCommand = {
+              command: "extractionFailed",
+              data: { message: err instanceof Error ? err.message : String(err) }
+            };
+            await commands.pipelineNotify(failCommand);
           });
-        }
-      });
+          break;
 
-      setProgress({ percent: 85, status: "Generating waveform..." });
+        case "progress":
+          setProgress({
+            percent: event.data.overallPercent,
+            status: event.data.message
+          });
+          break;
 
-      const waveformChannel = new Channel<WaveformEvent>();
-      let totalPeaks = 0;
-      let peaksProcessed = 0;
-      let audioSampleRate: number | null = null;
-      let audioDuration: number | null = null;
+        case "waveformComplete":
+          // Audio path is set from completed event, just update duration/info here
+          setDuration(event.data.durationSecs);
+          setAudioInfo({
+            sampleRate: event.data.sampleRate,
+            durationSecs: event.data.durationSecs,
+          });
+          break;
 
-      waveformChannel.onmessage = (event) => {
-        switch (event.event) {
-          case "started":
-            setProgress({ percent: 85, status: "Starting waveform..." });
-            break;
-          case "audioInfo":
-            audioSampleRate = event.data.sample_rate ?? null;
-            audioDuration = event.data.duration_secs ?? null;
-            break;
-          case "progress":
-            totalPeaks = event.data.total_peaks ?? 0;
-            peaksProcessed = 0;
-            break;
-          case "chunk": {
-            peaksProcessed += event.data.peaks?.length ?? 0;
-            const percent = totalPeaks > 0 ? Math.min(98, 85 + (peaksProcessed / totalPeaks) * 15) : 85;
-            setProgress({ percent, status: "Generating waveform..." });
-          } break;
-          case "completed":
-            setAudioPath(outputPath);
-            setDuration(audioDuration ?? event.data.duration_secs ?? 0);
-            setAudioInfo({
-              sampleRate: audioSampleRate ?? 44100,
-              durationSecs: audioDuration ?? event.data.duration_secs ?? 0,
-            });
-            setProgress(null);
-            setAppState("ready");
-            refetchStats();
-            break;
-          case "error":
-            setError(event.data.message ?? "Waveform generation failed");
-            setAppState("error");
-            break;
-        }
-      };
+        case "beatDetectionComplete":
+          console.log('[Pipeline] Beat analysis complete:', event.data);
+          setBeatInfo(event.data);
+          break;
 
-      await invoke("generate_waveform_stream", { audioPath: outputPath, onEvent: waveformChannel });
-    } catch (err) {
-      console.error('[App] Extraction failed:', err);
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(errorMessage);
+        case "completed":
+          console.log('[Pipeline] Completed:', event.data);
+          setAudioPath(event.data.audioPath);
+          setProgress(null);
+          setAppState("ready");
+          refetchStats();
+          break;
+
+        case "error":
+          console.error('[Pipeline] Error:', event.data);
+          setError(`${event.data.stage}: ${event.data.message}`);
+          setAppState("error");
+          break;
+      }
+    };
+
+    // Start the unified pipeline - it will emit RequestExtraction for us to handle
+    const pipelineResult = await commands.runPipeline(url, pipelineChannel);
+    if (pipelineResult.status === "error") {
+      console.error('[App] Pipeline failed:', pipelineResult.error);
+      setError(pipelineResult.error);
       setAppState("error");
     }
-  }, [refetchStats, pyodide]);
+  }, [refetchStats, runExtraction]);
 
   const handleReset = useCallback(() => {
     setAppState("idle");
@@ -207,6 +253,7 @@ function App() {
     setAudioBuffer(null);
     setCurrentProject(null);
     setAudioInfo(null);
+    setBeatInfo(null);
   }, []);
 
   const handleSelectProject = useCallback(async (project: Project) => {
@@ -217,38 +264,72 @@ function App() {
     setSamples([]);
     setSelectedRegion(null);
     setAudioBuffer(null);
+    setBeatInfo(null);
 
-    try {
-      const cachedAudio = await invoke<CachedAudioInfo | null>("check_cached_audio", {
+    const cachedResult = await commands.checkCachedAudio(project.videoId);
+    if (cachedResult.status === "error") {
+      console.error('[App] Cache check failed:', cachedResult.error);
+      setError(cachedResult.error);
+      setAppState("error");
+      return;
+    }
+
+    const cachedAudio = cachedResult.data;
+
+    if (cachedAudio) {
+      setMetadata({
+        title: project.title,
+        authorName: project.authorName,
+        authorUrl: project.authorUrl,
+        thumbnailUrl: `https://img.youtube.com/vi/${project.videoId}/mqdefault.jpg`,
         videoId: project.videoId,
       });
+      setCurrentProject(project);
+      setAppState("extracting");
+      setProgress({ percent: 0, status: "Processing audio..." });
 
-      if (cachedAudio) {
-        setMetadata({
-          title: project.title,
-          authorName: project.authorName,
-          authorUrl: project.authorUrl,
-          thumbnailUrl: `https://img.youtube.com/vi/${project.videoId}/mqdefault.jpg`,
-          videoId: project.videoId,
-        });
-        setAudioPath(cachedAudio.audioPath);
-        setDuration(cachedAudio.durationSecs);
-        setAudioInfo({
-          sampleRate: cachedAudio.sampleRate,
-          durationSecs: cachedAudio.durationSecs,
-        });
-        setCurrentProject(project);
-        setAppState("ready");
-      } else {
-        const url = `https://youtube.com/watch?v=${project.videoId}`;
-        await handleUrlSubmit(url);
-        setCurrentProject(project);
+      // Run pipeline for cached audio (waveform + beat detection in parallel)
+      const pipelineChannel = new Channel<PipelineEvent>();
+
+      pipelineChannel.onmessage = (event) => {
+        switch (event.event) {
+          case "progress": {
+            const displayPercent = event.data.overallPercent;
+            setProgress({ percent: displayPercent, status: "Processing audio..." });
+          } break;
+          case "waveformComplete":
+            setAudioPath(cachedAudio.audioPath);
+            setDuration(event.data.durationSecs);
+            setAudioInfo({
+              sampleRate: event.data.sampleRate,
+              durationSecs: event.data.durationSecs,
+            });
+            break;
+          case "beatDetectionComplete":
+            console.log('[App] Beat analysis complete:', event.data);
+            setBeatInfo(event.data);
+            break;
+          case "completed":
+            setProgress(null);
+            setAppState("ready");
+            break;
+          case "error":
+            setError(`${event.data.stage}: ${event.data.message}`);
+            setAppState("error");
+            break;
+        }
+      };
+
+      const processResult = await commands.processAudio(cachedAudio.audioPath, pipelineChannel);
+      if (processResult.status === "error") {
+        console.error('[App] Process audio failed:', processResult.error);
+        setError(processResult.error);
+        setAppState("error");
       }
-    } catch (err) {
-      console.error('[App] Project load failed:', err);
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(errorMessage);
-      setAppState("error");
+    } else {
+      const url = `https://youtube.com/watch?v=${project.videoId}`;
+      await handleUrlSubmit(url);
+      setCurrentProject(project);
     }
   }, [handleUrlSubmit]);
 
@@ -306,22 +387,16 @@ function App() {
   }, [db]);
 
   const handleExportSample = useCallback(async (sample: SampleDocType) => {
-    try {
-      const savePath = await save({
-        defaultPath: `${sample.name.replace(/[^a-zA-Z0-9]/g, "_")}.mp3`,
-        filters: [{ name: "Audio", extensions: ["mp3"] }],
-      });
+    const savePath = await save({
+      defaultPath: `${sample.name.replace(/[^a-zA-Z0-9]/g, "_")}.mp3`,
+      filters: [{ name: "Audio", extensions: ["mp3"] }],
+    });
 
-      if (!savePath) return;
+    if (!savePath) return;
 
-      await invoke("export_sample", {
-        sourcePath: sample.sourceAudioPath,
-        outputPath: savePath,
-        startTime: sample.startTime,
-        endTime: sample.endTime,
-      });
-    } catch (err) {
-      console.error("Export failed:", err);
+    const result = await commands.exportSample(sample.sourceAudioPath, savePath, sample.startTime, sample.endTime);
+    if (result.status === "error") {
+      console.error("Export failed:", result.error);
     }
   }, []);
 
@@ -434,10 +509,14 @@ function App() {
                       </p>
                       {progress && (
                         <div className="mt-2 w-48 h-1 bg-retro-surface-light rounded-full overflow-hidden mx-auto">
-                          <div
-                            className="h-full bg-neon-cyan transition-all duration-300"
-                            style={{ width: `${progress.percent}%` }}
-                          />
+                          {progress.percent < 0 ? (
+                            <div className="h-full w-1/3 bg-neon-cyan animate-pulse-slide" />
+                          ) : (
+                            <div
+                              className="h-full bg-neon-cyan transition-all duration-300"
+                              style={{ width: `${progress.percent}%` }}
+                            />
+                          )}
                         </div>
                       )}
                     </div>
@@ -486,19 +565,8 @@ function App() {
           </div>
         )}
 
-        {appState === "error" && (
-          <div className="h-full flex items-center justify-center">
-            <div className="bg-retro-surface border border-neon-pink/50 rounded p-6 max-w-sm">
-              <p className="text-neon-pink text-sm font-medium mb-2">Error</p>
-              <p className="text-cyber-300 text-sm mb-4">{error}</p>
-              <button
-                onClick={handleReset}
-                className="w-full px-4 py-2 bg-retro-surface-light hover:bg-neon-pink/20 border border-neon-pink/50 text-neon-pink text-sm rounded transition-colors"
-              >
-                Try Again
-              </button>
-            </div>
-          </div>
+        {appState === "error" && error && (
+          <ErrorDialog error={error} onDismiss={handleReset} />
         )}
       </main>
 
@@ -511,6 +579,19 @@ function App() {
             {appState === "ready" && "Deck Ready"}
             {appState === "error" && "Malfunction detected"}
           </span>
+          {beatInfo && (
+            <>
+              <span className="mx-2">•</span>
+              <span className="text-neon-cyan">
+                {beatInfo.bpm.toFixed(1)} BPM
+                {beatInfo.bpmConfidence > 0 && (
+                  <span className="text-cyber-600 ml-1">
+                    ({(beatInfo.bpmConfidence * 100).toFixed(0)}%)
+                  </span>
+                )}
+              </span>
+            </>
+          )}
           {selectedRegion && (
             <>
               <span className="mx-2">•</span>

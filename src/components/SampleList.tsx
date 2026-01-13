@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
+import { commands } from "../bindings";
 import type { SampleDocType } from "../lib/db";
 
 interface SampleListProps {
@@ -50,12 +50,16 @@ function SampleList({ samples, onDelete, onUpdateName }: SampleListProps) {
 
       setExportingId(sample.id);
 
-      await invoke("export_sample", {
-        sourcePath: sample.sourceAudioPath,
-        outputPath: savePath,
-        startTime: sample.startTime,
-        endTime: sample.endTime,
-      });
+      const result = await commands.exportSample(
+        sample.sourceAudioPath,
+        savePath,
+        sample.startTime,
+        sample.endTime
+      );
+
+      if (result.status === "error") {
+        throw new Error(result.error);
+      }
 
       setExportingId(null);
     } catch (err) {

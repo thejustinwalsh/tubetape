@@ -2,20 +2,20 @@
   <h1>🎵 Tubetape</h1>
   <p><strong>Extract, Sample, and Loop Audio from YouTube Videos</strong></p>
   <p>A lightning-fast desktop app for music producers, beat makers, and audio enthusiasts</p>
-  
+
   ![License](https://img.shields.io/badge/license-MIT-green.svg)
   ![Tauri](https://img.shields.io/badge/Tauri-2.0-24C8D8?logo=tauri)
   ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)
   ![Rust](https://img.shields.io/badge/Rust-Latest-CE422B?logo=rust)
   ![OpenCode](https://img.shields.io/badge/⚡_OpenCode-OmO-7B3FF5?style=flat)
-  
+
 </div>
 
 ---
 
 ## ✨ What is Tubetape?
 
-Remember making mixtapes? Tubetape brings that same creative energy to the digital age. Drop in a YouTube URL, and instantly extract the audio track with a beautiful waveform visualization. But here's where it gets interesting—**create precise audio samples with DAW-level controls**, complete with loop detection, beat snapping, and BPM analysis.
+Remember making mixtapes? Tubetape brings that same creative energy to the digital age. Drop in a YouTube URL, and instantly extract the audio track with a beautiful waveform visualization. But here's where it gets interesting—**create precise audio samples with DAW-level controls**, complete with BPM detection and beat analysis.
 
 Perfect for:
 - 🎹 **Music Producers** seeking unique samples
@@ -25,10 +25,11 @@ Perfect for:
 
 ### 🎯 Key Features
 
-- **Instant Audio Extraction** - Paste a YouTube URL and get the audio track in seconds
+- **Zero-Config Audio Extraction** - Paste a YouTube URL and get the audio track—no yt-dlp or ffmpeg installation required
 - **Visual Waveform Editor** - See your audio, select precise regions with pixel-perfect accuracy
+- **BPM Detection** - Automatic tempo analysis powered by aubio
 - **Multiple Samples Per Source** - Extract as many clips as you need from a single video
-- **Smart Project Management** - Organize samples by source video with automatic metadata
+- **Smart Caching** - Previously extracted audio loads instantly from local cache
 - **Desktop-Native Export** - Save samples directly to your filesystem with native dialogs
 - **Retro UI** - Beautiful 80s-inspired interface that's both functional and fun
 
@@ -43,8 +44,9 @@ Built with modern, blazing-fast technologies:
 
 - **Frontend**: React 19, TypeScript 5.8, Vite 7, Tailwind CSS v4
 - **Backend**: Rust (Tauri v2)
-- **Storage**: IndexedDB (via RxDB) for local-first data
-- **Audio**: Web Audio API for sample playback and visualization
+- **Audio Extraction**: yt-dlp running in Pyodide (WebAssembly) + FFmpeg via dlopen
+- **Audio Analysis**: aubio for BPM detection, custom Rust pipeline for waveform generation
+- **Storage**: IndexedDB for local-first data and audio caching
 - **Package Manager**: bun for lightning-fast installs
 
 Why this stack? Because we wanted **native performance** with **web flexibility**, and Tauri delivers exactly that—a tiny binary, fast startup, and the full power of Rust for heavy audio processing.
@@ -85,15 +87,26 @@ That's it! The app will launch with hot reload enabled for development.
 ### Audio Extraction
 Paste any YouTube URL and Tubetape handles the rest—fetching metadata, extracting audio, and generating a waveform visualization. All processing happens locally on your machine for maximum speed and privacy.
 
+**How it works under the hood:**
+- yt-dlp runs inside Pyodide (Python compiled to WebAssembly)
+- HTTP requests are routed through Rust to bypass CORS restrictions
+- JavaScript challenges are solved in a sandboxed iframe (no external runtime needed)
+- FFmpeg is bundled as a dylib and loaded via dlopen for audio conversion
+
 ### Sample Creation
 Click and drag on the waveform to select regions. Each sample is stored in IndexedDB with:
 - Start/end timestamps
 - Duration
 - Source video metadata
-- Custom naming
+- Detected BPM
 
-### Project Organization
-Samples are automatically grouped by their source video, creating a natural project structure. Switch between projects instantly and manage your entire sample library in one place.
+### Audio Analysis
+Tubetape automatically analyzes your audio using a Rust processing pipeline:
+- **Waveform Generation** - Peak data computed in chunks for responsive visualization
+- **BPM Detection** - Tempo analysis via aubio for beat-aware sample creation
+
+### Smart Caching
+Previously extracted audio is cached locally. When you revisit a source, the audio loads instantly while waveforms and metadata are recomputed from the pipeline.
 
 ### Export
 Use native file dialogs to export samples exactly where you need them. No cloud, no uploads—just fast, local file operations powered by Rust.
@@ -102,61 +115,32 @@ Use native file dialogs to export samples exactly where you need them. No cloud,
 
 ## 📋 Roadmap & TODOs
 
-### 1. yt-dlp Binary Distribution & EJS Script Handling
-**Priority:** High | **Category:** Core Infrastructure
+### Completed
 
-Enable fully self-contained binary distribution without relying on user's local environment.
+- [x] **Pyodide Integration** - yt-dlp runs entirely in WebAssembly, no user installation required
+- [x] **Sandboxed JS Challenges** - YouTube signature decryption via iframe sandbox (no QuickJS binary needed)
+- [x] **FFmpeg via dlopen** - Bundled as shared libraries, loaded at runtime for LGPL compliance
+- [x] **BPM Detection** - Automatic tempo analysis using aubio
+- [x] **Audio Caching** - Previously extracted sources load from local cache
+- [x] **Processing Pipeline** - Type-safe Rust pipeline with Tauri Specta for waveform and metadata generation
+- [x] **Sample-accurate looping and playback**
+- [x] **Visual waveform with region selection**
 
-**Tasks:**
-- [ ] Integrate yt-dlp binary fetching from GitHub releases
-- [x] Implement EJS script handling for dynamic download URLs (see [yt-dlp EJS Wiki](https://github.com/yt-dlp/yt-dlp/wiki/EJS))
-- [x] Bundle upstream QuickJS for EJS template processing (hardened runtime compatible, faster than QuickJS-NG)
-- [x] Create Rust layer for secure binary execution with proper CLI argument passing
-- [ ] Add binary caching and versioning mechanism
-- [ ] Implement fallback strategy if binary fetch fails
+### In Progress
 
-**Details:** See [docs/YTDLP_INTEGRATION.md](docs/YTDLP_INTEGRATION.md)
-
----
-
-### 2. Advanced DAW Features
-**Priority:** High | **Category:** User Experience
-
-Expand audio editing capabilities with professional DAW-like tools for sample creation.
-
-**Tasks:**
 - [ ] **Loop Detection** - Automatically detect and suggest perfect loop points
 - [ ] **Beat Snapping** - Snap sample boundaries to detected beats/tempo grid
-- [ ] **BPM Detection** - Analyze source audio and samples for tempo information
-- [ ] **Loop Markers** - Visual markers for loop start/end with auto-trimming to loops
+- [ ] **Loop Markers** - Visual markers for loop start/end with auto-trimming
 - [ ] **Waveform Zoom** - Multi-level zoom with detailed peak rendering
 - [ ] **Grid/Ruler** - Temporal grid overlay for sample-accurate editing
-- [ ] **Meta Display** - Show BPM, key, and other audio characteristics
 
-**Completed Features:**
-- [x] Sample-accurate looping and playback
-- [x] Visual waveform with region selection
+### Future
+
+- [ ] Project export/import functionality
+- [ ] Key/root note detection
+- [ ] Loudness analysis (LUFS)
 
 **Details:** See [docs/DAW_FEATURES.md](docs/DAW_FEATURES.md)
-
----
-
-### 3. Project Flow & Caching Improvements
-**Priority:** High | **Category:** Stability & Performance
-
-Refine project management and implement intelligent caching for faster workflows.
-
-**Tasks:**
-- [ ] Load cached source audio if already extracted (check IndexedDB)
-- [ ] Implement smart project state management
-- [ ] Add project version/migration support
-- [ ] Create proper cleanup mechanism for orphaned cache entries
-- [ ] Improve source URL validation and duplicate detection
-- [ ] Add project export/import functionality
-- [ ] Optimize IndexedDB queries and indexing
-- [ ] Implement proper error recovery for failed extractions
-
-**Details:** See [docs/PROJECT_FLOW.md](docs/PROJECT_FLOW.md)
 
 ---
 
@@ -179,13 +163,18 @@ cd src-tauri && cargo clippy
 cd src-tauri && cargo test
 ```
 
-See [AGENTS.md](AGENTS.md) for detailed development guidelines and architecture documentation.
+### Developer Documentation
+
+- [AGENTS.md](AGENTS.md) - Development guidelines and architecture overview
+- [docs/pyodide-yt-dlp-guide.md](docs/pyodide-yt-dlp-guide.md) - How the Pyodide + yt-dlp integration works
+- [docs/ffmpeg-library.md](docs/ffmpeg-library.md) - FFmpeg dlopen architecture and API
+- [docs/build-scripts.md](docs/build-scripts.md) - Build system and dependency management
 
 ---
 
 ## 🎉 Credits & Vibes
 
-This project was **vibe-coded in a day** using some absolutely incredible tools:
+This project started as a **"vibe-coded in a day"** experiment using some absolutely incredible tools:
 
 - **[OpenCode](https://github.com/microsoft/opencode)** - Mad props for the AI-powered development workflow
 - **[Oh My OpenCode](https://ohmyopencode.com)** - Taking the dev experience to the next level
@@ -215,5 +204,5 @@ Built with 🖤 by [@thejustinwalsh](https://github.com/thejustinwalsh)
 ---
 
 <div align="center">
-  <sub>Made possible by Tauri, React, Rust, and a whole lot of <s>coffee</s> claude ☕</sub>
+  <sub>Made possible by Tauri, React, Rust, <s>coffee</s> claude ☕</sub>
 </div>

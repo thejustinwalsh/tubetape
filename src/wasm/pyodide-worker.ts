@@ -250,8 +250,8 @@ async function initFFmpegCapabilities(): Promise<void> {
   if (ffmpegCapabilities) return;
   
   try {
-    const result = await invokeTauri<{ exit_code: number; stdout: string; stderr: string }>('ffprobe_capabilities');
-    if (result.exit_code === 0) {
+    const result = await invokeTauri<{ exitCode: number; stdout: string; stderr: string }>('ffprobe_capabilities');
+    if (result.exitCode === 0) {
       ffmpegCapabilities = parseFFmpegCapabilities(result.stdout, result.stderr);
       console.log('[pyodide-worker] FFmpeg capabilities loaded from native');
       return;
@@ -873,7 +873,7 @@ export interface FFmpegCommand {
   inputPath?: string;
   outputPath?: string;
   status: 'pending' | 'running' | 'completed' | 'error';
-  result?: { exit_code: number; stdout: string; stderr: string };
+  result?: { exitCode: number; stdout: string; stderr: string };
   error?: string;
 }
 
@@ -922,20 +922,20 @@ async function executeQueuedFFmpegCommands(): Promise<FFmpegCommand[]> {
     if (verboseMode) console.log(`[pyodide-worker] FFmpeg args:`, cmd.args);
     
     try {
-      const result = await invokeTauri<{ exit_code: number; stdout: string; stderr: string }>(
+      const result = await invokeTauri<{ exitCode: number; stdout: string; stderr: string }>(
         'dlopen_ffmpeg',
         { command: cmd.command, args: cmd.args }
       );
-      
-      console.log(`[pyodide-worker] FFmpeg exit code: ${result.exit_code}`);
+
+      console.log(`[pyodide-worker] FFmpeg exit code: ${result.exitCode}`);
       if (verboseMode && result.stdout) console.log(`[pyodide-worker] FFmpeg stdout:`, result.stdout.slice(0, 500));
       if (verboseMode && result.stderr) console.log(`[pyodide-worker] FFmpeg stderr:`, result.stderr.slice(0, 1000));
-      
-      cmd.status = result.exit_code === 0 ? 'completed' : 'error';
+
+      cmd.status = result.exitCode === 0 ? 'completed' : 'error';
       cmd.result = result;
-      
-      if (result.exit_code !== 0) {
-        cmd.error = result.stderr || `FFmpeg exited with code ${result.exit_code}`;
+
+      if (result.exitCode !== 0) {
+        cmd.error = result.stderr || `FFmpeg exited with code ${result.exitCode}`;
       }
     } catch (error) {
       cmd.status = 'error';
@@ -1792,16 +1792,31 @@ globalThis.waitForJSChallenge = waitForJSChallenge;
 
 self.addEventListener('message', (event) => {
   const data = event.data;
-  
+
   if (data.type === 'tauri_response') {
     handleTauriResponse(data as TauriResponse);
     return;
   }
-  
+
   if (data.type === 'js_sandbox_result') {
     return;
   }
-  
+
+  // downloadProgress messages are informational - they update download state in the queue
+  // but don't require a response back to the client
+  if (data.type === 'downloadProgress') {
+    // Update download progress in the queue if we have a matching download
+    const progress = data.data as { bytesDownloaded: number; totalBytes: number | null; percent: number };
+    for (const download of downloadQueue.values()) {
+      if (download.status === 'processing') {
+        download.bytesDownloaded = progress.bytesDownloaded;
+        download.totalBytes = progress.totalBytes ?? undefined;
+        download.lastActivity = Date.now();
+      }
+    }
+    return;
+  }
+
   handleMessage(event as MessageEvent<WorkerMessage>).catch((error) => {
     console.error('[pyodide-worker] Unhandled error:', error);
     self.postMessage({

@@ -1,21 +1,24 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { useAppStats } from "./useAppStats";
 
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn(),
+// Mock the bindings module
+vi.mock("../bindings", () => ({
+  commands: {
+    getAppStats: vi.fn(),
+  },
 }));
 
-import { invoke } from "@tauri-apps/api/core";
-const mockInvoke = vi.mocked(invoke);
+import { commands } from "../bindings";
+const mockGetAppStats = commands.getAppStats as Mock;
 
 describe("useAppStats", () => {
   beforeEach(() => {
-    mockInvoke.mockReset();
+    mockGetAppStats.mockReset();
   });
 
   it("should initialize with default stats", () => {
-    mockInvoke.mockResolvedValue({ cacheSizeMb: 0, memoryUsageMb: 0 });
+    mockGetAppStats.mockResolvedValue({ status: "ok", data: { cacheSizeMb: 0, memoryUsageMb: 0 } });
 
     const { result } = renderHook(() => useAppStats());
 
@@ -24,7 +27,7 @@ describe("useAppStats", () => {
   });
 
   it("should fetch stats on mount", async () => {
-    mockInvoke.mockResolvedValue({ cacheSizeMb: 150.5, memoryUsageMb: 256.7 });
+    mockGetAppStats.mockResolvedValue({ status: "ok", data: { cacheSizeMb: 150.5, memoryUsageMb: 256.7 } });
 
     const { result } = renderHook(() => useAppStats());
 
@@ -34,20 +37,20 @@ describe("useAppStats", () => {
     expect(result.current.stats.memoryUsageMb).toBe(257);
   });
 
-  it("should call get_app_stats command", async () => {
-    mockInvoke.mockResolvedValue({ cacheSizeMb: 0, memoryUsageMb: 0 });
+  it("should call getAppStats command", async () => {
+    mockGetAppStats.mockResolvedValue({ status: "ok", data: { cacheSizeMb: 0, memoryUsageMb: 0 } });
 
     renderHook(() => useAppStats());
 
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith("get_app_stats");
+      expect(mockGetAppStats).toHaveBeenCalled();
     });
   });
 
   it("should provide refetch function", async () => {
-    mockInvoke
-      .mockResolvedValueOnce({ cacheSizeMb: 100, memoryUsageMb: 200 })
-      .mockResolvedValueOnce({ cacheSizeMb: 200, memoryUsageMb: 300 });
+    mockGetAppStats
+      .mockResolvedValueOnce({ status: "ok", data: { cacheSizeMb: 100, memoryUsageMb: 200 } })
+      .mockResolvedValueOnce({ status: "ok", data: { cacheSizeMb: 200, memoryUsageMb: 300 } });
 
     const { result } = renderHook(() => useAppStats());
 
@@ -64,7 +67,7 @@ describe("useAppStats", () => {
 
   it("should handle fetch errors gracefully", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mockInvoke.mockRejectedValue(new Error("Network error"));
+    mockGetAppStats.mockResolvedValue({ status: "error", error: "Network error" });
 
     const { result } = renderHook(() => useAppStats());
 

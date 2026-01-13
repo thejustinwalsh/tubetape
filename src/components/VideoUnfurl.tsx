@@ -49,18 +49,24 @@ function VideoUnfurl({ metadata, progress }: VideoUnfurlProps) {
           <div className="flex-none flex items-center gap-3">
             <div className="w-32">
               <div className="h-1 bg-retro-surface-light rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-acid-green transition-all duration-300"
-                  style={{ width: `${progress.percent}%` }}
-                />
+                {progress.percent < 0 ? (
+                  <div className="h-full w-1/3 bg-acid-green animate-pulse-slide" />
+                ) : (
+                  <div
+                    className="h-full bg-acid-green transition-all duration-300"
+                    style={{ width: `${progress.percent}%` }}
+                  />
+                )}
               </div>
               <p className="text-cyber-500 text-xs mt-1 text-right">
                 {progress.status}
               </p>
             </div>
-            <span className="text-acid-green text-xs font-mono">
-              {Math.round(progress.percent)}%
-            </span>
+            {progress.percent >= 0 && (
+              <span className="text-acid-green text-xs font-mono">
+                {Math.round(progress.percent)}%
+              </span>
+            )}
           </div>
         )}
       </div>
