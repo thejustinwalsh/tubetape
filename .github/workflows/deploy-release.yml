@@ -1,0 +1,71 @@
+name: Deploy Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Determine release branch name
+        id: branch
+        run: |
+          # Get current version using the same logic as stage-release
+          OUTPUT=$(bun run scripts/get-next-version.ts 2>&1 | tail -n 1)
+          CURRENT_VERSION=$(echo "$OUTPUT" | jq -r '.version')
+          BRANCH="staging/v${CURRENT_VERSION}-next"
+          echo "name=$BRANCH" >> $GITHUB_OUTPUT
+          echo "Release branch: $BRANCH"
+
+      - name: Find release PR
+        id: find_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ steps.branch.outputs.name }}"
+
+          # Check if branch exists
+          if ! git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
+            echo "Branch $BRANCH does not exist"
+            exit 1
+          fi
+
+          # Find PR from this exact branch to release
+          PR_NUMBER=$(gh pr list --base release --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No open PR found from $BRANCH to release"
+            exit 1
+          fi
+
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "Found PR #$PR_NUMBER"
+
+      - name: Force push to release
+        run: |
+          BRANCH="${{ steps.branch.outputs.name }}"
+          git fetch origin "$BRANCH"
+          git push origin "origin/$BRANCH:release" --force
+          echo "Force pushed $BRANCH to release"
+
+      - name: Close PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.find_pr.outputs.pr_number }}"
+          gh pr close "$PR_NUMBER" --comment "✅ Released via force-push to \`release\` branch."
+          echo "Closed PR #$PR_NUMBER"
