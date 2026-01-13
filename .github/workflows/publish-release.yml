@@ -1,12 +1,19 @@
-name: 'publish'
+name: 'Publish Release'
 
 on:
   push:
     branches:
       - release
+  workflow_run:
+    workflows: ["Merge Pending Release"]
+    types:
+      - completed
+  workflow_dispatch:
 
 jobs:
   publish-tauri:
+    # Only run if triggered by push/dispatch OR if workflow_run succeeded
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: write
     strategy:
@@ -19,26 +26,53 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: release
+
+      - name: Check if already released
+        id: check_release
+        run: |
+          # Get version from tauri.conf.json
+          VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+          TAG="v$VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+          # Check if tag already exists
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "already_released=true" >> $GITHUB_OUTPUT
+            echo "⚠️ Tag $TAG already exists - skipping release"
+          else
+            echo "already_released=false" >> $GITHUB_OUTPUT
+            echo "✅ Tag $TAG does not exist - proceeding with release"
+          fi
 
       - name: setup node
+        if: steps.check_release.outputs.already_released != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
 
       - name: setup bun
+        if: steps.check_release.outputs.already_released != 'true'
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
       - name: install rust
+        if: steps.check_release.outputs.already_released != 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: install frontend deps
+        if: steps.check_release.outputs.already_released != 'true'
         run: bun install
 
       - name: import developer certs
+        if: steps.check_release.outputs.already_released != 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -54,12 +88,14 @@ jobs:
           security find-identity -v -p codesigning build.keychain
 
       - name: verify certificate
+        if: steps.check_release.outputs.already_released != 'true'
         run: |
           CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
           CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
           echo "CERT_ID=$CERT_ID" >> $GITHUB_ENV
 
       - name: build and publish
+        if: steps.check_release.outputs.already_released != 'true'
         uses: tauri-apps/tauri-action@v0.6.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
