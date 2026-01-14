@@ -1,6 +1,6 @@
 mod executor;
 
-pub use executor::{PipelineExecutor, PipelineResult, ProcessingOnlyExecutor};
+pub use executor::{PipelineExecutor, PipelineResult};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -34,6 +34,7 @@ impl StageName {
     }
 
     /// Whether this stage must complete before the next stage starts
+    #[allow(dead_code)]
     pub fn is_blocking(&self) -> bool {
         matches!(
             self,

@@ -119,6 +119,7 @@ async function buildFFmpegLibraries(
     : `-Wl,--whole-archive ${lameStaticLib} -Wl,--no-whole-archive`;
   
   const configureFlags = [
+    // Build configuration
     `--prefix=${outputDir}`,
     "--enable-shared",
     "--disable-static",
@@ -130,30 +131,88 @@ async function buildFFmpegLibraries(
     "--disable-txtpages",
     "--disable-debug",
     "--enable-stripping",
-    "--enable-gpl",
     "--enable-pic",
     "--enable-pthreads",
+
+    // Disable all components, then enable only what we need
+    "--disable-everything",
+
+    // Don't build these libraries at all (not covered by --disable-everything)
+    "--disable-avdevice",
+    "--disable-avfilter",
+    "--disable-swscale",
+
+    // Disable autodetected external libs to ensure self-contained build
+    // (not covered by --disable-everything - these control linking)
+    "--disable-xlib",
+    "--disable-libxcb",
+    "--disable-sdl2",
+    "--disable-sndio",
+    "--disable-vulkan",
+    "--disable-alsa",
+    "--disable-iconv",
+    "--disable-lzma",
+    "--disable-bzlib",
+
+    // LAME for MP3 encoding (explicitly enabled external lib)
     "--enable-libmp3lame",
     `--extra-cflags=-I${lameInclude} -O3 -DNDEBUG`,
     `--extra-ldflags=-L${lameLib} ${forceLoadFlag}`,
     `--extra-libs=-lm`,
+
+    // Audio encoders
     "--enable-encoder=libmp3lame",
     "--enable-encoder=flac",
     "--enable-encoder=aac",
     "--enable-encoder=pcm_s16le",
+    "--enable-encoder=pcm_s24le",
+    "--enable-encoder=pcm_f32le",
+
+    // Audio decoders
     "--enable-decoder=flac",
     "--enable-decoder=aac",
+    "--enable-decoder=aac_latm",
     "--enable-decoder=mp3",
+    "--enable-decoder=mp3float",
+    "--enable-decoder=opus",
+    "--enable-decoder=vorbis",
     "--enable-decoder=pcm_s16le",
+    "--enable-decoder=pcm_s24le",
+    "--enable-decoder=pcm_f32le",
+
+    // Muxers (output containers)
     "--enable-muxer=mp3",
     "--enable-muxer=flac",
     "--enable-muxer=adts",
     "--enable-muxer=wav",
+    "--enable-muxer=ogg",
+
+    // Demuxers (input containers)
     "--enable-demuxer=mp3",
     "--enable-demuxer=flac",
     "--enable-demuxer=aac",
     "--enable-demuxer=wav",
     "--enable-demuxer=mov",
+    "--enable-demuxer=matroska",
+    "--enable-demuxer=ogg",
+    "--enable-demuxer=hls",             // HLS streams from YouTube
+
+    // Parsers (codec detection)
+    "--enable-parser=aac",
+    "--enable-parser=aac_latm",
+    "--enable-parser=flac",
+    "--enable-parser=mpegaudio",
+    "--enable-parser=opus",
+    "--enable-parser=vorbis",
+
+    // Protocols (I/O)
+    "--enable-protocol=file",
+    "--enable-protocol=http",           // HTTP for HLS segments
+    "--enable-protocol=https",          // HTTPS for HLS segments
+    "--enable-protocol=hls",            // HLS protocol handler
+    "--enable-protocol=tcp",            // TCP transport
+    "--enable-protocol=tls",            // TLS for HTTPS
+    "--enable-protocol=crypto",         // Encrypted streams
   ];
 
   if (isMacOS && arch === "arm64") {
@@ -178,8 +237,6 @@ async function buildFFmpegLibraries(
     `libavcodec.${ext}`,
     `libavutil.${ext}`,
     `libswresample.${ext}`,
-    `libswscale.${ext}`,
-    `libavfilter.${ext}`,
   ];
 
   const builtLibs: string[] = [];
@@ -207,8 +264,6 @@ async function fixLibraryPaths(libDir: string): Promise<void> {
     `libavcodec.${ext}`,
     `libavutil.${ext}`,
     `libswresample.${ext}`,
-    `libswscale.${ext}`,
-    `libavfilter.${ext}`,
   ];
   
   if (isMacOS) {
