@@ -1,13 +1,31 @@
 
-import React from 'react';
+import { useState } from 'react';
 
-export const SocialBanner: React.FC = () => {
-    // Generate some fake waveform data
-    const bars = Array.from({ length: 40 }, (_, i) => {
-        // Create a symmetric-ish waveform pattern
-        const height = 40 + Math.random() * 100 * Math.sin(i * 0.2) + Math.random() * 40;
+// Simple seeded PRNG (mulberry32)
+function seededRandom(seed: number): () => number {
+    return () => {
+        seed |= 0;
+        seed = seed + 0x6D2B79F5 | 0;
+        let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+}
+
+function generateWaveformBars(seed?: number): number[] {
+    const random = seed !== undefined ? seededRandom(seed) : Math.random;
+    return Array.from({ length: 40 }, (_, i) => {
+        const height = 40 + random() * 100 * Math.sin(i * 0.2) + random() * 40;
         return Math.max(20, Math.min(180, height));
     });
+}
+
+interface SocialBannerProps {
+    seed?: number;
+}
+
+export const SocialBanner = ({ seed }: SocialBannerProps) => {
+    const [bars] = useState(() => generateWaveformBars(seed));
 
     return (
         <div
@@ -59,8 +77,9 @@ export const SocialBanner: React.FC = () => {
                     style={{
                         fontFamily: "'Russo One', sans-serif",
                         background: 'linear-gradient(to bottom right, #fff, #a5b4fc)',
+                        backgroundClip: 'text',
                         WebkitBackgroundClip: 'text',
-                        WebkitTextFillColor: 'transparent',
+                        color: 'transparent',
                         filter: 'drop-shadow(0 0 20px rgba(139, 92, 246, 0.5))'
                     }}
                 >
