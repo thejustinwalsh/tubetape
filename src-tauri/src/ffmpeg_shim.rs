@@ -323,10 +323,16 @@ fn remux_audio_copy(
             (ff.avformat_close_input)(&mut input_ctx);
             return Err("Input stream pointer is null".to_string());
         }
+        let in_codecpar = (*in_stream).codecpar;
+        if in_codecpar.is_null() {
+            (ff.avformat_close_input)(&mut input_ctx);
+            return Err("Input stream codecpar is null".to_string());
+        }
+        let in_time_base = (*in_stream).time_base;
+        let in_duration = (*in_stream).duration;
 
-        let duration_secs = if (*in_stream).duration != AV_NOPTS_VALUE {
-            (*in_stream).duration as f64 * (*in_stream).time_base.num as f64
-                / (*in_stream).time_base.den as f64
+        let duration_secs = if in_duration != AV_NOPTS_VALUE {
+            in_duration as f64 * in_time_base.num as f64 / in_time_base.den as f64
         } else {
             (*input_ctx).duration as f64 / AV_TIME_BASE as f64
         };
@@ -361,8 +367,14 @@ fn remux_audio_copy(
             (ff.avformat_close_input)(&mut input_ctx);
             return Err("Failed to create output stream".to_string());
         }
+        let out_codecpar = (*out_stream).codecpar;
+        if out_codecpar.is_null() {
+            (ff.avformat_free_context)(output_ctx);
+            (ff.avformat_close_input)(&mut input_ctx);
+            return Err("Output stream codecpar is null".to_string());
+        }
 
-        let ret = (ff.avcodec_parameters_copy)((*out_stream).codecpar, (*in_stream).codecpar);
+        let ret = (ff.avcodec_parameters_copy)(out_codecpar, in_codecpar);
         if ret < 0 {
             (ff.avformat_free_context)(output_ctx);
             (ff.avformat_close_input)(&mut input_ctx);
@@ -372,7 +384,8 @@ fn remux_audio_copy(
             ));
         }
 
-        (*out_stream).time_base = (*in_stream).time_base;
+        (*out_stream).time_base = in_time_base;
+        let out_time_base = (*out_stream).time_base;
 
         stderr.push_str(&format!(
             "Output #0, {} to '{}':\n",
@@ -417,7 +430,7 @@ fn remux_audio_copy(
             }
 
             (*packet).stream_index = 0;
-            (ff.av_packet_rescale_ts)(packet, (*in_stream).time_base, (*out_stream).time_base);
+            (ff.av_packet_rescale_ts)(packet, in_time_base, out_time_base);
 
             total_size += (*packet).size as u64;
 
