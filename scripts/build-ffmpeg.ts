@@ -340,14 +340,20 @@ export async function buildFFmpeg(config: BuildConfig): Promise<string[]> {
       await chmod(targetPath, 0o755);
     }
 
-    if (IS_PROD && isMacOS && libName.endsWith(".dylib")) {
-      await signBinary(targetPath, libName);
-    }
-
     copiedLibs.push(targetPath);
   }
 
   await fixLibraryPaths(targetDir);
+
+  if (IS_PROD && isMacOS) {
+    console.log(`🔏 Code-signing dylibs...`);
+    for (const libPath of copiedLibs) {
+      const libName = basename(libPath);
+      if (libName.endsWith(".dylib")) {
+        await signBinary(libPath, libName);
+      }
+    }
+  }
 
   const libDir = join(ffmpegOutputDir, "lib");
   const versionedLibs = await $`ls -la ${libDir}/*.${ext}* 2>/dev/null || true`.quiet().text();
