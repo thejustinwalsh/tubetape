@@ -96,7 +96,7 @@ jobs:
 
       - name: build and publish
         if: steps.check_release.outputs.already_released != 'true'
-        uses: tauri-apps/tauri-action@v0.6.0
+        uses: tauri-apps/tauri-action@v0.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
