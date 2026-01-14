@@ -3,7 +3,7 @@ authors = ['you']
 description = 'A Tauri App'
 edition = '2021'
 name = 'tubetape'
-version = '0.4.0'
+version = '0.5.0'
 
 [lib]
 crate-type = ['staticlib', 'cdylib', 'rlib']

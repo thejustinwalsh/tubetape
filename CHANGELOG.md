@@ -1,4 +1,4 @@
-## [0.4.0] - 2026-01-14
+## [0.5.0] - 2026-01-14
 
 ### 🚀 Features
 
@@ -10,3 +10,5 @@
 - Code-sign after library path fix (#22)
 - Update ffmpeg features (#23)
 - Add null checks in ffmpeg lib code (#25)
+- Add av_frame_make_writable and improve export_sample logic (#27)
+- Add SocialBanner component and preview stories (#26)
