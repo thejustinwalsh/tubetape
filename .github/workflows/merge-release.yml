@@ -1,4 +1,4 @@
-name: Deploy Release
+name: Merge Pending Release
 
 on:
   workflow_dispatch:
@@ -55,6 +55,41 @@ jobs:
           echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
           echo "Found PR #$PR_NUMBER"
 
+      - name: Verify PR is ready (not draft)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.find_pr.outputs.pr_number }}"
+          IS_DRAFT=$(gh pr view "$PR_NUMBER" --json isDraft --jq '.isDraft')
+
+          if [ "$IS_DRAFT" = "true" ]; then
+            echo "❌ PR #$PR_NUMBER is still in draft state"
+            echo "Mark the PR as ready for review before deploying."
+            exit 1
+          fi
+
+          echo "✅ PR #$PR_NUMBER is ready for merge"
+
+      - name: Verify PR checks passed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.find_pr.outputs.pr_number }}"
+
+          # Get the PR's check status
+          STATUS=$(gh pr checks "$PR_NUMBER" --json bucket,state --jq 'map(select(.bucket != "")) | if length == 0 then "no_checks" elif all(.state == "SUCCESS") then "success" else "failure" end')
+
+          if [ "$STATUS" = "no_checks" ]; then
+            echo "⚠️  No CI checks found on PR #$PR_NUMBER"
+            echo "Proceeding anyway..."
+          elif [ "$STATUS" != "success" ]; then
+            echo "❌ PR #$PR_NUMBER has failing or pending checks:"
+            gh pr checks "$PR_NUMBER"
+            exit 1
+          else
+            echo "✅ All checks passed on PR #$PR_NUMBER"
+          fi
+
       - name: Force push to release
         run: |
           BRANCH="${{ steps.branch.outputs.name }}"
@@ -62,10 +97,11 @@ jobs:
           git push origin "origin/$BRANCH:release" --force
           echo "Force pushed $BRANCH to release"
 
-      - name: Close PR
+      - name: Add release comment to PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_NUMBER="${{ steps.find_pr.outputs.pr_number }}"
-          gh pr close "$PR_NUMBER" --comment "✅ Released via force-push to \`release\` branch."
-          echo "Closed PR #$PR_NUMBER"
+          # GitHub auto-detects the PR as merged after force push
+          gh pr comment "$PR_NUMBER" --body "✅ Released via force-push to \`release\` branch." || true
+          echo "PR #$PR_NUMBER should now show as merged"

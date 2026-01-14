@@ -1,4 +1,4 @@
-## [0.3.0] - 2026-01-13
+## [0.3.0] - 2026-01-14
 
 ### 🚀 Features
 
@@ -7,12 +7,15 @@
 - Refines region logic and adds zoom with slider (#4)
 - React-compiler (#5)
 - Add deploy release workflow for automated releases (#18)
+- Add workflow for merging pending releases with PR verification (#19)
+- Add release workflow (#20)
 
 ### 🐛 Bug Fixes
 
 - Ensure sample-accurate looping in playRegion method
 - Missed db move update
 - Add visual test snapshots
+- Code-sign after library path fix (#22)
 
 ### 🚜 Refactor
 
