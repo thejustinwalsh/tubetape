@@ -38,6 +38,7 @@ enum PipelineState {
     /// All done
     Completed,
     /// Failed
+    #[allow(dead_code)]
     Failed,
 }
 
@@ -161,7 +162,7 @@ impl PipelineExecutor {
         self.state = PipelineState::ProcessingAudio;
 
         let audio_path_buf = PathBuf::from(&audio_path);
-        let (waveform_data, beat_info) = self.run_processing_parallel(&audio_path_buf).await?;
+        let (waveform_data, _beat_info) = self.run_processing_parallel(&audio_path_buf).await?;
 
         // === COMPLETE ===
         self.state = PipelineState::Completed;
@@ -535,7 +536,7 @@ impl ProcessingOnlyExecutor {
 
         // For processing-only, base progress is 0 (no fetch stages)
         // But we need to adjust weights to only count waveform + beats
-        let base_progress = 0.0;
+        let _base_progress = 0.0;
 
         // Run both stages in parallel
         let waveform_handle = tokio::task::spawn_blocking(move || {

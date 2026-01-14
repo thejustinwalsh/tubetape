@@ -3,6 +3,7 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 #![allow(clippy::all)]
+#![allow(unnecessary_transmutes)]
 
 use libloading::Library;
 use once_cell::sync::OnceCell;
@@ -495,6 +496,10 @@ impl AudioFile {
                 (ff.avformat_close_input)(&mut format_ctx);
                 return Err("No audio stream found".to_string());
             }
+            if decoder.is_null() {
+                (ff.avformat_close_input)(&mut format_ctx);
+                return Err("No decoder found for audio stream".to_string());
+            }
 
             if (*format_ctx).streams.is_null() {
                 (ff.avformat_close_input)(&mut format_ctx);
@@ -512,6 +517,10 @@ impl AudioFile {
                 return Err("Stream pointer is null".to_string());
             }
             let codecpar = (*stream).codecpar;
+            if codecpar.is_null() {
+                (ff.avformat_close_input)(&mut format_ctx);
+                return Err("Stream codecpar is null".to_string());
+            }
 
             let codec_ctx = (ff.avcodec_alloc_context3)(decoder);
             if codec_ctx.is_null() {
@@ -559,6 +568,12 @@ impl AudioFile {
 
     pub fn seek(&mut self, timestamp_secs: f64) -> Result<(), String> {
         let ff = get_ffmpeg()?;
+        if self.format_ctx.is_null() {
+            return Err("Format context is null".to_string());
+        }
+        if self.codec_ctx.is_null() {
+            return Err("Codec context is null".to_string());
+        }
         unsafe {
             let timestamp = (timestamp_secs * AV_TIME_BASE as f64) as i64;
             let ret = (ff.av_seek_frame)(
@@ -682,6 +697,10 @@ pub fn export_sample(
             (ff.avformat_close_input)(&mut input_ctx);
             return Err("No audio stream found".to_string());
         }
+        if decoder.is_null() {
+            (ff.avformat_close_input)(&mut input_ctx);
+            return Err("No decoder found for audio stream".to_string());
+        }
 
         if (*input_ctx).streams.is_null() {
             (ff.avformat_close_input)(&mut input_ctx);
@@ -700,6 +719,12 @@ pub fn export_sample(
             (ff.avformat_close_input)(&mut input_ctx);
             return Err("Input stream pointer is null".to_string());
         }
+        let in_codecpar = (*in_stream).codecpar;
+        if in_codecpar.is_null() {
+            (ff.avformat_close_input)(&mut input_ctx);
+            return Err("Input stream codecpar is null".to_string());
+        }
+        let in_time_base = (*in_stream).time_base;
 
         let dec_ctx = (ff.avcodec_alloc_context3)(decoder);
         if dec_ctx.is_null() {
@@ -707,7 +732,7 @@ pub fn export_sample(
             return Err("Failed to allocate decoder context".to_string());
         }
 
-        let ret = (ff.avcodec_parameters_to_context)(dec_ctx, (*in_stream).codecpar);
+        let ret = (ff.avcodec_parameters_to_context)(dec_ctx, in_codecpar);
         if ret < 0 {
             (ff.avcodec_free_context)(&mut (dec_ctx as *mut _));
             (ff.avformat_close_input)(&mut input_ctx);
@@ -755,6 +780,13 @@ pub fn export_sample(
             (ff.avformat_close_input)(&mut input_ctx);
             return Err("Failed to create output stream".to_string());
         }
+        let out_codecpar = (*out_stream).codecpar;
+        if out_codecpar.is_null() {
+            (ff.avformat_free_context)(output_ctx);
+            (ff.avcodec_free_context)(&mut (dec_ctx as *mut _));
+            (ff.avformat_close_input)(&mut input_ctx);
+            return Err("Output stream codecpar is null".to_string());
+        }
 
         let enc_ctx = (ff.avcodec_alloc_context3)(encoder);
         if enc_ctx.is_null() {
@@ -794,7 +826,7 @@ pub fn export_sample(
             return Err(format!("Failed to open encoder: {}", av_error_string(ret)));
         }
 
-        let ret = (ff.avcodec_parameters_from_context)((*out_stream).codecpar, enc_ctx);
+        let ret = (ff.avcodec_parameters_from_context)(out_codecpar, enc_ctx);
         if ret < 0 {
             (ff.avcodec_free_context)(&mut (enc_ctx as *mut _));
             (ff.avformat_free_context)(output_ctx);
@@ -805,7 +837,9 @@ pub fn export_sample(
                 av_error_string(ret)
             ));
         }
-        (*out_stream).time_base = (*enc_ctx).time_base;
+        let enc_time_base = (*enc_ctx).time_base;
+        (*out_stream).time_base = enc_time_base;
+        let out_time_base = (*out_stream).time_base;
 
         let ret = (ff.avio_open)(
             &mut (*output_ctx).pb,
@@ -912,8 +946,8 @@ pub fn export_sample(
                 continue;
             }
 
-            let pkt_time = (*packet).pts as f64 * (*in_stream).time_base.num as f64
-                / (*in_stream).time_base.den as f64;
+            let pkt_time = (*packet).pts as f64 * in_time_base.num as f64
+                / in_time_base.den as f64;
             if pkt_time < start_secs {
                 (ff.av_packet_unref)(packet);
                 continue;
@@ -970,8 +1004,8 @@ pub fn export_sample(
                 while (ff.avcodec_receive_packet)(enc_ctx, packet) >= 0 {
                     (ff.av_packet_rescale_ts)(
                         packet,
-                        (*enc_ctx).time_base,
-                        (*out_stream).time_base,
+                        enc_time_base,
+                        out_time_base,
                     );
                     (*packet).stream_index = 0;
                     (ff.av_interleaved_write_frame)(output_ctx, packet);
@@ -982,7 +1016,7 @@ pub fn export_sample(
 
         (ff.avcodec_send_frame)(enc_ctx, std::ptr::null());
         while (ff.avcodec_receive_packet)(enc_ctx, packet) >= 0 {
-            (ff.av_packet_rescale_ts)(packet, (*enc_ctx).time_base, (*out_stream).time_base);
+            (ff.av_packet_rescale_ts)(packet, enc_time_base, out_time_base);
             (*packet).stream_index = 0;
             (ff.av_interleaved_write_frame)(output_ctx, packet);
             (ff.av_packet_unref)(packet);
