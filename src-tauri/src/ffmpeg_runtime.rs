@@ -77,6 +77,7 @@ type FnAvFrameAlloc = unsafe extern "C" fn() -> *mut AVFrame;
 type FnAvFrameFree = unsafe extern "C" fn(*mut *mut AVFrame);
 type FnAvFrameUnref = unsafe extern "C" fn(*mut AVFrame);
 type FnAvFrameGetBuffer = unsafe extern "C" fn(*mut AVFrame, c_int) -> c_int;
+type FnAvFrameMakeWritable = unsafe extern "C" fn(*mut AVFrame) -> c_int;
 type FnAvPacketAlloc = unsafe extern "C" fn() -> *mut AVPacket;
 type FnAvPacketFree = unsafe extern "C" fn(*mut *mut AVPacket);
 type FnAvPacketUnref = unsafe extern "C" fn(*mut AVPacket);
@@ -153,6 +154,7 @@ pub struct FFmpegFunctions {
     pub av_frame_free: FnAvFrameFree,
     pub av_frame_unref: FnAvFrameUnref,
     pub av_frame_get_buffer: FnAvFrameGetBuffer,
+    pub av_frame_make_writable: FnAvFrameMakeWritable,
     pub av_packet_alloc: FnAvPacketAlloc,
     pub av_packet_free: FnAvPacketFree,
     pub av_packet_unref: FnAvPacketUnref,
@@ -347,6 +349,9 @@ fn load_libraries() -> Result<LoadedLibraries, String> {
             av_frame_unref: *avutil.get(b"av_frame_unref\0").map_err(|e| e.to_string())?,
             av_frame_get_buffer: *avutil
                 .get(b"av_frame_get_buffer\0")
+                .map_err(|e| e.to_string())?,
+            av_frame_make_writable: *avutil
+                .get(b"av_frame_make_writable\0")
                 .map_err(|e| e.to_string())?,
             av_packet_alloc: *avcodec
                 .get(b"av_packet_alloc\0")
@@ -801,7 +806,12 @@ pub fn export_sample(
             num: 1,
             den: (*dec_ctx).sample_rate,
         };
-        (ff.av_channel_layout_copy)(&mut (*enc_ctx).ch_layout, &(*dec_ctx).ch_layout);
+
+        // Use av_channel_layout_default to get a proper native channel layout
+        // instead of copying from decoder which may have unspecified layout
+        // (libmp3lame requires native channel order, not just channel count)
+        let num_channels = (*dec_ctx).ch_layout.nb_channels;
+        (ff.av_channel_layout_default)(&mut (*enc_ctx).ch_layout, num_channels);
 
         (*enc_ctx).sample_fmt = match format {
             AudioFormat::Mp3 => AVSampleFormat_AV_SAMPLE_FMT_S16P as i32,
@@ -893,7 +903,14 @@ pub fn export_sample(
         let mut samples_written: i64 = 0;
         let max_samples = (duration * (*enc_ctx).sample_rate as f64) as i64;
 
-        let needs_resample = (*dec_ctx).sample_fmt != (*enc_ctx).sample_fmt;
+        // We need resampling if:
+        // 1. Sample formats differ, OR
+        // 2. Encoder requires fixed frame sizes (like MP3's 1152 samples)
+        // The resampler handles buffering for us in the fixed frame size case
+        let encoder_needs_fixed_frames = (*enc_ctx).frame_size > 0;
+        let needs_resample = (*dec_ctx).sample_fmt != (*enc_ctx).sample_fmt
+            || (*dec_ctx).sample_rate != (*enc_ctx).sample_rate
+            || encoder_needs_fixed_frames;
         let mut swr_ctx: *mut SwrContext = std::ptr::null_mut();
 
         if needs_resample {
@@ -936,9 +953,55 @@ pub fn export_sample(
             (ff.avformat_close_input)(&mut input_ctx);
             return Err("Failed to allocate output frame".to_string());
         }
+
+        // Get encoder's required frame size (e.g., 1152 for MP3)
+        // If frame_size is 0, encoder accepts variable frame sizes
+        let enc_frame_size = if (*enc_ctx).frame_size > 0 {
+            (*enc_ctx).frame_size
+        } else {
+            1024 // Default for variable frame size encoders
+        };
+
+        // Pre-allocate out_frame with the encoder's required frame size
         (*out_frame).format = (*enc_ctx).sample_fmt;
         (*out_frame).sample_rate = (*enc_ctx).sample_rate;
         (ff.av_channel_layout_copy)(&mut (*out_frame).ch_layout, &(*enc_ctx).ch_layout);
+        (*out_frame).nb_samples = enc_frame_size;
+        let ret = (ff.av_frame_get_buffer)(out_frame, 0);
+        if ret < 0 {
+            if !swr_ctx.is_null() {
+                (ff.swr_free)(&mut swr_ctx);
+            }
+            (ff.av_frame_free)(&mut (out_frame as *mut _));
+            (ff.av_frame_free)(&mut (frame as *mut _));
+            (ff.av_packet_free)(&mut (packet as *mut _));
+            (ff.avio_closep)(&mut (*output_ctx).pb);
+            (ff.avcodec_free_context)(&mut (enc_ctx as *mut _));
+            (ff.avformat_free_context)(output_ctx);
+            (ff.avcodec_free_context)(&mut (dec_ctx as *mut _));
+            (ff.avformat_close_input)(&mut input_ctx);
+            return Err("Failed to allocate output frame buffer".to_string());
+        }
+
+        // Helper closure to encode and write a frame
+        let encode_and_write =
+            |ff: &FFmpegFunctions,
+             enc_ctx: *mut AVCodecContext,
+             out_frame: *mut AVFrame,
+             packet: *mut AVPacket,
+             output_ctx: *mut AVFormatContext,
+             enc_time_base: AVRational,
+             out_time_base: AVRational| {
+                let ret = (ff.avcodec_send_frame)(enc_ctx, out_frame);
+                if ret >= 0 {
+                    while (ff.avcodec_receive_packet)(enc_ctx, packet) >= 0 {
+                        (ff.av_packet_rescale_ts)(packet, enc_time_base, out_time_base);
+                        (*packet).stream_index = 0;
+                        (ff.av_interleaved_write_frame)(output_ctx, packet);
+                        (ff.av_packet_unref)(packet);
+                    }
+                }
+            };
 
         'decode: while (ff.av_read_frame)(input_ctx, packet) >= 0 {
             if (*packet).stream_index != audio_stream_idx {
@@ -969,51 +1032,106 @@ pub fn export_sample(
                     break 'decode;
                 }
 
-                let encode_frame = if needs_resample {
-                    (*out_frame).format = (*enc_ctx).sample_fmt;
-                    (*out_frame).sample_rate = (*enc_ctx).sample_rate;
-                    (ff.av_channel_layout_copy)(&mut (*out_frame).ch_layout, &(*enc_ctx).ch_layout);
-                    (*out_frame).nb_samples = (*frame).nb_samples;
-                    (ff.av_frame_get_buffer)(out_frame, 0);
-                    (ff.swr_convert)(
-                        swr_ctx,
-                        (*out_frame).data.as_mut_ptr(),
-                        (*out_frame).nb_samples,
-                        (*frame).data.as_ptr() as *const *const u8,
-                        (*frame).nb_samples,
-                    );
-                    (*out_frame).pts = samples_written;
-                    out_frame
-                } else {
-                    (*frame).pts = samples_written;
-                    frame
-                };
-
-                samples_written += (*encode_frame).nb_samples as i64;
-
-                let ret = (ff.avcodec_send_frame)(enc_ctx, encode_frame);
                 if needs_resample {
-                    (ff.av_frame_unref)(out_frame);
+                    // Feed decoded samples into resampler
+                    // First, push all input samples into the resampler
+                    if (*frame).nb_samples > 0 {
+                        (ff.swr_convert)(
+                            swr_ctx,
+                            std::ptr::null_mut(), // Don't output yet, just buffer
+                            0,
+                            (*frame).data.as_ptr() as *const *const u8,
+                            (*frame).nb_samples,
+                        );
+                    }
+
+                    // Now pull out full encoder-sized frames
+                    while (ff.swr_get_delay)(swr_ctx, (*enc_ctx).sample_rate as i64) >= enc_frame_size as i64 {
+                        if samples_written >= max_samples {
+                            break;
+                        }
+
+                        // Make frame writable for reuse
+                        (ff.av_frame_make_writable)(out_frame);
+
+                        // Convert samples - pull exactly enc_frame_size samples
+                        let converted = (ff.swr_convert)(
+                            swr_ctx,
+                            (*out_frame).data.as_mut_ptr(),
+                            enc_frame_size,
+                            std::ptr::null(),
+                            0,
+                        );
+
+                        if converted <= 0 {
+                            break;
+                        }
+
+                        (*out_frame).nb_samples = converted;
+                        (*out_frame).pts = samples_written;
+                        samples_written += converted as i64;
+
+                        encode_and_write(
+                            ff,
+                            enc_ctx,
+                            out_frame,
+                            packet,
+                            output_ctx,
+                            enc_time_base,
+                            out_time_base,
+                        );
+                    }
+                } else {
+                    // No resampling needed - send frame directly
+                    (*frame).pts = samples_written;
+                    samples_written += (*frame).nb_samples as i64;
+
+                    let ret = (ff.avcodec_send_frame)(enc_ctx, frame);
+                    if ret >= 0 {
+                        while (ff.avcodec_receive_packet)(enc_ctx, packet) >= 0 {
+                            (ff.av_packet_rescale_ts)(packet, enc_time_base, out_time_base);
+                            (*packet).stream_index = 0;
+                            (ff.av_interleaved_write_frame)(output_ctx, packet);
+                            (ff.av_packet_unref)(packet);
+                        }
+                    }
                 }
+
                 (ff.av_frame_unref)(frame);
-
-                if ret < 0 {
-                    continue;
-                }
-
-                while (ff.avcodec_receive_packet)(enc_ctx, packet) >= 0 {
-                    (ff.av_packet_rescale_ts)(
-                        packet,
-                        enc_time_base,
-                        out_time_base,
-                    );
-                    (*packet).stream_index = 0;
-                    (ff.av_interleaved_write_frame)(output_ctx, packet);
-                    (ff.av_packet_unref)(packet);
-                }
             }
         }
 
+        // Flush remaining samples from resampler
+        if needs_resample && !swr_ctx.is_null() {
+            loop {
+                (ff.av_frame_make_writable)(out_frame);
+                let converted = (ff.swr_convert)(
+                    swr_ctx,
+                    (*out_frame).data.as_mut_ptr(),
+                    enc_frame_size,
+                    std::ptr::null(),
+                    0,
+                );
+                if converted <= 0 {
+                    break;
+                }
+                (*out_frame).nb_samples = converted;
+                (*out_frame).pts = samples_written;
+                samples_written += converted as i64;
+
+                encode_and_write(
+                    ff,
+                    enc_ctx,
+                    out_frame,
+                    packet,
+                    output_ctx,
+                    enc_time_base,
+                    out_time_base,
+                );
+            }
+        }
+
+        // Flush encoder
         (ff.avcodec_send_frame)(enc_ctx, std::ptr::null());
         while (ff.avcodec_receive_packet)(enc_ctx, packet) >= 0 {
             (ff.av_packet_rescale_ts)(packet, enc_time_base, out_time_base);
@@ -1043,6 +1161,7 @@ pub fn export_sample(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn setup_lib_dir() -> bool {
         let cwd = std::env::current_dir().unwrap();
@@ -1057,6 +1176,20 @@ mod tests {
             }
         }
         false
+    }
+
+    fn get_test_wav_path() -> Option<std::path::PathBuf> {
+        let cwd = std::env::current_dir().unwrap();
+        let paths = [
+            cwd.join("vendor/lame-3.100/testcase.wav"),
+            cwd.join("src-tauri/vendor/lame-3.100/testcase.wav"),
+        ];
+        for path in paths {
+            if path.exists() {
+                return Some(path);
+            }
+        }
+        None
     }
 
     #[test]
@@ -1081,5 +1214,189 @@ mod tests {
         assert!(v.contains("avutil"));
         assert!(v.contains("avcodec"));
         assert!(v.contains("avformat"));
+    }
+
+    #[test]
+    fn test_export_sample_mp3() {
+        if !setup_lib_dir() {
+            eprintln!("Skipping: FFmpeg libraries not found");
+            return;
+        }
+
+        let input_path = match get_test_wav_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping: testcase.wav not found");
+                return;
+            }
+        };
+
+        let output_path = std::env::temp_dir().join("test_export_sample.mp3");
+        let _ = fs::remove_file(&output_path);
+
+        // testcase.wav is ~0.56 seconds, so export the full duration
+        let result = export_sample(
+            &input_path,
+            &output_path,
+            0.0,
+            0.5,
+        );
+
+        assert!(result.is_ok(), "Export failed: {:?}", result.err());
+        assert!(output_path.exists(), "Output file was not created");
+
+        // Check that the file has reasonable size (not empty or tiny)
+        let metadata = fs::metadata(&output_path).unwrap();
+        let file_size = metadata.len();
+
+        // MP3 at ~128kbps for 0.5 seconds should be roughly 8KB
+        // Allow range of 2KB-50KB to account for variations and encoder overhead
+        assert!(
+            file_size > 2_000,
+            "Output file too small ({} bytes), likely encoding failed",
+            file_size
+        );
+        assert!(
+            file_size < 50_000,
+            "Output file unexpectedly large ({} bytes)",
+            file_size
+        );
+
+        // Verify the output is a valid MP3 by reading its metadata
+        let audio_file = AudioFile::open(&output_path);
+        assert!(audio_file.is_ok(), "Failed to open output MP3: {:?}", audio_file.err());
+
+        let audio = audio_file.unwrap();
+        // Duration should be close to 0.5 seconds (allow some tolerance for MP3 padding)
+        assert!(
+            audio.duration_secs >= 0.3 && audio.duration_secs <= 1.0,
+            "Output duration {} not close to expected 0.5 seconds",
+            audio.duration_secs
+        );
+
+        // Cleanup
+        let _ = fs::remove_file(&output_path);
+    }
+
+    #[test]
+    fn test_export_sample_mp3_with_offset() {
+        if !setup_lib_dir() {
+            eprintln!("Skipping: FFmpeg libraries not found");
+            return;
+        }
+
+        let input_path = match get_test_wav_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping: testcase.wav not found");
+                return;
+            }
+        };
+
+        let output_path = std::env::temp_dir().join("test_export_sample_offset.mp3");
+        let _ = fs::remove_file(&output_path);
+
+        // testcase.wav is ~0.56 seconds, export from 0.1 to 0.4 seconds
+        let result = export_sample(
+            &input_path,
+            &output_path,
+            0.1,
+            0.4,
+        );
+
+        assert!(result.is_ok(), "Export with offset failed: {:?}", result.err());
+        assert!(output_path.exists(), "Output file was not created");
+
+        let metadata = fs::metadata(&output_path).unwrap();
+        assert!(
+            metadata.len() > 1_000,
+            "Output file too small ({} bytes)",
+            metadata.len()
+        );
+
+        // Cleanup
+        let _ = fs::remove_file(&output_path);
+    }
+
+    #[test]
+    fn test_export_sample_wav() {
+        if !setup_lib_dir() {
+            eprintln!("Skipping: FFmpeg libraries not found");
+            return;
+        }
+
+        let input_path = match get_test_wav_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping: testcase.wav not found");
+                return;
+            }
+        };
+
+        let output_path = std::env::temp_dir().join("test_export_sample.wav");
+        let _ = fs::remove_file(&output_path);
+
+        // testcase.wav is ~0.56 seconds
+        let result = export_sample(
+            &input_path,
+            &output_path,
+            0.0,
+            0.5,
+        );
+
+        assert!(result.is_ok(), "WAV export failed: {:?}", result.err());
+        assert!(output_path.exists(), "Output WAV file was not created");
+
+        // WAV is uncompressed, 0.5 seconds of stereo 44.1kHz 16-bit audio
+        // should be roughly 44100 * 0.5 * 2 * 2 = 88200 bytes
+        let metadata = fs::metadata(&output_path).unwrap();
+        assert!(
+            metadata.len() > 20_000,
+            "WAV output file too small ({} bytes)",
+            metadata.len()
+        );
+
+        // Cleanup
+        let _ = fs::remove_file(&output_path);
+    }
+
+    #[test]
+    fn test_export_sample_flac() {
+        if !setup_lib_dir() {
+            eprintln!("Skipping: FFmpeg libraries not found");
+            return;
+        }
+
+        let input_path = match get_test_wav_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping: testcase.wav not found");
+                return;
+            }
+        };
+
+        let output_path = std::env::temp_dir().join("test_export_sample.flac");
+        let _ = fs::remove_file(&output_path);
+
+        // testcase.wav is ~0.56 seconds
+        let result = export_sample(
+            &input_path,
+            &output_path,
+            0.0,
+            0.5,
+        );
+
+        assert!(result.is_ok(), "FLAC export failed: {:?}", result.err());
+        assert!(output_path.exists(), "Output FLAC file was not created");
+
+        let metadata = fs::metadata(&output_path).unwrap();
+        assert!(
+            metadata.len() > 5_000,
+            "FLAC output file too small ({} bytes)",
+            metadata.len()
+        );
+
+        // Cleanup
+        let _ = fs::remove_file(&output_path);
     }
 }
