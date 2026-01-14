@@ -122,7 +122,7 @@ function App() {
           command: "downloadProgress",
           data: { bytesDownloaded, totalBytes }
         };
-        
+
         const result = await commands.pipelineNotify(command);
         if (result.status === "error") {
           console.debug('[App] Failed to forward download progress:', result.error);
@@ -405,7 +405,7 @@ function App() {
       <header className="flex-none h-12 bg-retro-dark border-b border-retro-surface-light flex items-center px-4 gap-4">
         <div className="flex gap-2">
           <div className="w-3 h-3 rounded-full bg-neon-pink" />
-          <span className="font-family-display text-sm font-bold text-cyber-100 uppercase tracking-wider leading-none text-center">
+          <span className="font-family-display text-sm font-bold text-cyber-100 uppercase tracking-tighter leading-none text-center">
             Tubetape
           </span>
         </div>
